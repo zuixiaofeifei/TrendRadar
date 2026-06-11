@@ -588,8 +588,16 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     config["WEIGHT_CONFIG"] = _load_weight_config(config_data)
 
     # 平台配置
+    # 注意:platforms.enabled=false 时整个列表清空,避免日志误导(显示 11 个平台但实际不抓)
+    # 下游 _crawl_data / _load_analysis_data 已有独立的 ENABLE_CRAWLER 检查作兜底
     platforms_config = config_data.get("platforms", {})
-    config["PLATFORMS"] = [p for p in platforms_config.get("sources", []) if p.get("enabled", True)]
+    if platforms_config.get("enabled", True):
+        config["PLATFORMS"] = [
+            p for p in platforms_config.get("sources", [])
+            if p.get("enabled", True)
+        ]
+    else:
+        config["PLATFORMS"] = []
 
     # RSS 配置
     config["RSS"] = _load_rss_config(config_data)
