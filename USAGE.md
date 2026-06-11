@@ -137,35 +137,42 @@ uv sync
 pip install -r requirements.txt
 ```
 
-### 3. 准备 secrets.yaml
+### 3. 配置密钥(docker/.env)
+
+docker 部署:所有密钥写在 `docker/.env`,docker compose 自动注入容器:
 
 ```bash
-cp config/secrets.example.yaml config/secrets.yaml
-vim config/secrets.yaml
+vim docker/.env
 ```
 
-**最小可跑配置**:
+**最小可跑字段**:
 
-```yaml
-ai:
-  api_key: "sk-你的DeepSeek key"
+```bash
+# AI
+AI_API_KEY=sk-你的DeepSeek key
+AI_MODEL=deepseek/deepseek-chat
 
-notification:
-  channels:
-    feishu:
-      webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"
+# 飞书
+FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxxx
 
-keyword_search:
-  sources:
-    github:
-      token: "github_pat_xxxx"   # 留空也能跑,只是 60/h 限流
+# 关键词跨源检索
+GITHUB_SEARCH_TOKEN=github_pat_xxxx   # 留空也能跑,只是 60/h 限流
+
+# 运行
+RUN_MODE=cron
+CRON_SCHEDULE=*/30 * * * *
+IMMEDIATE_RUN=true
 ```
+
+**字段完整对照表**见 [.env ↔ config.yaml 字段对照](#env-字段对照)。
 
 收紧权限:
 
 ```bash
-chmod 600 config/secrets.yaml
+chmod 600 docker/.env
 ```
+
+非 docker 部署(裸 Python):上面字段全部用 `export` 设成环境变量即可。
 
 ### 4. 打开 keyword_search 总开关
 
@@ -291,45 +298,49 @@ schedule:
 | `ai_translation.enabled` | true/false | AI 翻译(英文源会用到) |
 | `storage.backend` | `auto`/`local`/`remote` | 存储后端 |
 
-### secrets.yaml(私密,git ignored)
+### .env 字段对照
 
-**完全跟 config.yaml 字段集互斥**,只放密钥/凭据:
+`docker/.env` 通过 docker compose `environment` 段映射进容器,字段对应 `config.yaml` 路径:
 
-```yaml
-ai:
-  api_key: "..."
-
-notification:
-  channels:
-    feishu:
-      webhook_url: "..."
-    # 其他通道按需填
-
-keyword_search:
-  sources:
-    github:
-      token: "..."
-    reddit:
-      client_id: "..."
-      client_secret: "..."
-      user_agent: "..."
-
-storage:
-  remote:
-    endpoint_url: "..."
-    bucket_name: "..."
-    access_key_id: "..."
-    secret_access_key: "..."
-```
+| docker/.env 字段 | config.yaml 路径 |
+|------------------|-----------------|
+| `AI_API_KEY` | `ai.api_key` |
+| `AI_MODEL` | `ai.model` |
+| `AI_API_BASE` | `ai.api_base` |
+| `AI_ANALYSIS_ENABLED` | `ai_analysis.enabled` |
+| `FEISHU_WEBHOOK_URL` | `notification.channels.feishu.webhook_url` |
+| `DINGTALK_WEBHOOK_URL` | `notification.channels.dingtalk.webhook_url` |
+| `WEWORK_WEBHOOK_URL` | `notification.channels.wework.webhook_url` |
+| `TELEGRAM_BOT_TOKEN` | `notification.channels.telegram.bot_token` |
+| `TELEGRAM_CHAT_ID` | `notification.channels.telegram.chat_id` |
+| `EMAIL_FROM` / `EMAIL_PASSWORD` / `EMAIL_TO` | `notification.channels.email.*` |
+| `NTFY_TOPIC` / `NTFY_TOKEN` | `notification.channels.ntfy.*` |
+| `BARK_URL` | `notification.channels.bark.url` |
+| `SLACK_WEBHOOK_URL` | `notification.channels.slack.webhook_url` |
+| `GENERIC_WEBHOOK_URL` | `notification.channels.generic_webhook.webhook_url` |
+| `S3_ENDPOINT_URL` | `storage.remote.endpoint_url` |
+| `S3_BUCKET_NAME` | `storage.remote.bucket_name` |
+| `S3_ACCESS_KEY_ID` | `storage.remote.access_key_id` |
+| `S3_SECRET_ACCESS_KEY` | `storage.remote.secret_access_key` |
+| `S3_REGION` | `storage.remote.region` |
+| **`GITHUB_SEARCH_TOKEN`** | `keyword_search.sources.github.token` |
+| **`REDDIT_CLIENT_ID`** | `keyword_search.sources.reddit.client_id` |
+| **`REDDIT_CLIENT_SECRET`** | `keyword_search.sources.reddit.client_secret` |
+| **`REDDIT_USER_AGENT`** | `keyword_search.sources.reddit.user_agent` |
+| `RUN_MODE` | (容器入口脚本读) |
+| `CRON_SCHEDULE` | (容器入口脚本读) |
+| `IMMEDIATE_RUN` | (容器入口脚本读) |
+| `WEBSERVER_PORT` | (容器入口脚本读) |
 
 ### 优先级链
 
 ```
-secrets.yaml 字段非空    →    config.yaml 同字段    →    环境变量(部分字段)
+环境变量(docker/.env)    →    config.yaml 同字段(留作覆盖入口)
 ```
 
-- secrets.yaml 中**空字符串/null** 视为"未设置",不会清空 config.yaml 同名字段
-- 环境变量:`AI_API_KEY` / `FEISHU_WEBHOOK_URL` / `GITHUB_SEARCH_TOKEN` / `REDDIT_CLIENT_ID` 等
+- 任一字段:env 非空时取 env;否则取 config.yaml 同字段
+- config.yaml 在本 fork 中已**移除**所有密钥字段(全部走 env)
+- 想临时不走 .env 调试?直接在 config.yaml 写值即可,代码不区分来源
 
 ### 其他配置文件
 
@@ -588,24 +599,20 @@ python -m mcp_server
 
 ### 加新通知通道(比如钉钉)
 
-在 `secrets.yaml` 加:
+在 `docker/.env` 加:
 
-```yaml
-notification:
-  channels:
-    dingtalk:
-      webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+```bash
+DINGTALK_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token=xxx
 ```
 
-不需要改 config.yaml。
+`docker-compose.yml` 已经映射好了,直接 `docker compose up -d` 生效。
 
 ### 多账号推送(同时推到 2 个飞书群)
 
-```yaml
-notification:
-  channels:
-    feishu:
-      webhook_url: "https://url1;https://url2"    # 分号分隔
+在 `docker/.env`(分号分隔):
+
+```bash
+FEISHU_WEBHOOK_URL=https://url1;https://url2
 ```
 
 ### 临时不推送(只抓数据)
@@ -643,8 +650,8 @@ keyword_search:
 | 错误 | 原因 | 处理 |
 |------|------|------|
 | `配置文件加载失败` | yaml 语法 | `python -c "import yaml; yaml.safe_load(open('config/config.yaml'))"` |
-| `AI 模型连通失败` | DeepSeek key 错/网络 | 检查 secrets.yaml + `curl https://api.deepseek.com/v1/models -H "Authorization: Bearer $KEY"` |
-| `飞书 webhook 未配置` | secrets.yaml 没填 | 看 `config.notification.channels.feishu` |
+| `AI 模型连通失败` | DeepSeek key 错/网络 | 检查 `docker/.env` 里 `AI_API_KEY` + `curl https://api.deepseek.com/v1/models -H "Authorization: Bearer $KEY"` |
+| `飞书 webhook 未配置` | `.env` 没填 `FEISHU_WEBHOOK_URL` | 检查 `docker/.env`,改完 `docker compose restart` |
 
 ### 推送收不到
 
@@ -667,7 +674,7 @@ python -m trendradar --test-notification
 ### GitHub `403: API rate limit`
 
 - 没配 PAT 时 60/h,跑多关键词容易触发
-- 处理:secrets.yaml 填 `keyword_search.sources.github.token`
+- 处理:`docker/.env` 加 `GITHUB_SEARCH_TOKEN=github_pat_xxx`,然后 `docker compose restart`
 
 ### Reddit 403 / 401
 

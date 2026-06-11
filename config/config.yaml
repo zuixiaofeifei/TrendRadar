@@ -185,15 +185,15 @@ rss:
 #   - rss: 订阅式，被动接收源里的所有内容，靠关键词过滤
 #   - keyword_search: 主动检索，给关键词去全网搜
 #
-# 密钥位置：
-#   全部统一在 config/secrets.yaml 中(已被 .gitignore)
-#   模板见 config/secrets.example.yaml
+# 密钥位置:
+#   docker 部署 → 写在 docker/.env(项目根的 docker-compose 会自动加载)
+#   非 docker → 自己 export 环境变量
 #
-# 兜底:secrets.yaml 字段空时按以下顺序尝试
-#   1. config.yaml 同字段(本文件,已移除密钥字段)
-#   2. 环境变量(docker/k8s 部署时方便)
-#      - GITHUB_SEARCH_TOKEN
-#      - REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET / REDDIT_USER_AGENT
+# 字段对照:
+#   GITHUB_SEARCH_TOKEN       (可选,空则走 60/h 未鉴权)
+#   REDDIT_CLIENT_ID          (Reddit 强制 OAuth,需先注册)
+#   REDDIT_CLIENT_SECRET
+#   REDDIT_USER_AGENT         (可选,格式 "platform:appname:v1 (by /u/xxx)")
 # ===============================================================
 keyword_search:
   enabled: false                          # 总开关
@@ -221,11 +221,11 @@ keyword_search:
   use_proxy: false
   proxy_url: ""                           # 留空则复用 advanced.crawler.default_proxy
 
-  # 各 provider 非密钥配置(token / client_id / client_secret 等放 secrets.yaml)
+  # 各 provider 非密钥配置(token / client_id / client_secret 等通过 docker/.env)
   sources:
     github:
       enabled: true                       # 推荐启用,HN 之外覆盖度最高
-                                          # token → secrets.yaml(留空走 60/h 未鉴权)
+                                          # GITHUB_SEARCH_TOKEN → docker/.env(空则走 60/h 未鉴权)
       types:                              # 要搜的对象类型
         - "repositories"
         - "issues"
@@ -251,7 +251,8 @@ keyword_search:
                                           #
                                           # 审核通过后:
                                           #   1. old.reddit.com/prefs/apps 创建 script 类型 app
-                                          #   2. 把 client_id/client_secret 写入 secrets.yaml
+                                          #   2. 把 client_id/client_secret 写入 docker/.env
+                                          #      (REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET / REDDIT_USER_AGENT)
                                           #   3. 把此处 enabled 改为 true
                                           #   4. 视情况关掉 rss.feeds 里的 r-* 订阅(避免重复)
       subreddits:                         # 空 = 全站,否则限定子版块
@@ -366,9 +367,8 @@ display:
 # ===============================================================
 # 6. 推送通知
 #
-# ⚠️ 密钥(webhook_url / bot_token / 密码 / 完整 URL 等)统一放在
-#    config/secrets.yaml,本文件只放非敏感的渠道配置项。
-#    模板见 config/secrets.example.yaml
+# ⚠️ 密钥(webhook_url / bot_token / 密码 / 完整 URL 等)统一放在 docker/.env
+#    本文件只放非敏感的渠道配置项(消息类型 / 服务器地址 / 模板等)
 #
 # 📌 多账号:分号(;)分隔,如 "url1;url2;url3"
 #    配对项(如 Telegram token 和 chat_id)数量必须一致
@@ -378,7 +378,7 @@ notification:
                                       # 开启 schedule 时仍为总开关:false=永不推送,true=由调度控制
 
   # 各渠道的"非密钥"配置项
-  # 凡是 webhook_url / token / 密码 / 邮箱地址等敏感字段 → secrets.yaml
+  # 凡是 webhook_url / token / 密码 / 邮箱地址等敏感字段 → docker/.env
   channels:
     wework:
       msg_type: "markdown"            # markdown(群机器人) | text(个人微信应用)
@@ -420,7 +420,7 @@ storage:
 
   # 远程存储配置(S3 兼容协议:R2 / OSS / COS / AWS S3 / MinIO 等)
   # ⚠️ endpoint_url / bucket_name / access_key_id / secret_access_key
-  #    全部统一放在 config/secrets.yaml,本文件只保留非敏感字段
+  #    通过 docker/.env 注入(S3_ENDPOINT_URL / S3_BUCKET_NAME / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY)
   remote:
     retention_days: 0                 # 保留天数(0=永久保留)
     region: ""                        # 区域(可选,部分服务商需要)
@@ -448,7 +448,7 @@ ai:
 
   model: "deepseek/deepseek-v4-flash"
 
-  # ⚠️ api_key 统一在 config/secrets.yaml 配置(参考 secrets.example.yaml)
+  # ⚠️ api_key 通过 docker/.env 注入(AI_API_KEY)
 
   api_base: ""                      # 自定义 API 地址（可选，绝大多数情况留空即可）
                                     #

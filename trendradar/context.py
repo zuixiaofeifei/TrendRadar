@@ -125,11 +125,10 @@ class AppContext:
 
     def build_keyword_search_config(self):
         """
-        构造 SearchConfig 对象,密钥在此时从环境变量兜底
+        构造 SearchConfig 对象
 
-        延迟构造的好处:
-        - 主流程按需调用,未启用时零开销
-        - 环境变量变更后立即生效,不需要 ctx 持有过期密钥
+        密钥来源(优先级):config.yaml 字段 > 环境变量
+        延迟构造,主流程按需调用;未启用时零开销
         """
         from trendradar.search import SearchConfig                # noqa: WPS433
         advanced_crawler = self.config.get("ADVANCED", {}).get("CRAWLER", {})

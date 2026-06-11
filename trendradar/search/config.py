@@ -3,9 +3,10 @@
 关键词检索配置加载
 
 设计原则:
-- YAML 字段为空 → 自动读环境变量兜底,避免把密钥写进文件
+- 密钥统一从环境变量读取(docker 部署用 docker/.env 注入)
+- 配置文件 yaml 字段如果显式写了值,也兼容(yaml 优先)
 - 各 provider 是否启用由 enabled 字段控制
-- 提供 from_dict 单一入口,主流程不需要关心环境变量名
+- 提供 from_dict 单一入口
 
 环境变量约定:
 - GITHUB_SEARCH_TOKEN
@@ -18,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 
 def _resolve_secret(yaml_value: Optional[str], env_key: str) -> str:
-    """YAML 优先,空则读环境变量,再空返回 ''"""
+    """yaml 字段非空时优先用 yaml,否则读环境变量"""
     if isinstance(yaml_value, str) and yaml_value.strip():
         return yaml_value.strip()
     return os.getenv(env_key, "").strip()
