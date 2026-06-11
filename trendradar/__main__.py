@@ -598,6 +598,18 @@ class NewsAnalyzer:
     ) -> Optional[Tuple[Dict, Dict, Dict, Dict, List, List]]:
         """统一的数据加载和预处理，使用当前监控平台列表过滤历史数据"""
         try:
+            # platforms.enabled=false 时跳过 news 读取
+            # 返回"空但合法"的 tuple,让下游 RSS / keyword_search 流程继续
+            # 否则当 news db 不存在时(如热榜从未跑过或被手动清理),
+            # 调用方会抛"数据一致性检查失败",误以为是 bug
+            if not self.ctx.config.get("ENABLE_CRAWLER", True):
+                if not quiet:
+                    print("[热榜] platforms.enabled=false,跳过 news 数据读取")
+                word_groups, filter_words, global_filters = (
+                    self.ctx.load_frequency_words(self.frequency_file)
+                )
+                return ({}, {}, {}, {}, word_groups, filter_words, global_filters)
+
             # 获取当前配置的监控平台ID列表
             current_platform_ids = self.ctx.platform_ids
             if not quiet:
