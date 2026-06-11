@@ -72,6 +72,9 @@ def _load_crawler_config(config_data: Dict) -> Dict:
         "REQUEST_INTERVAL": crawler_config.get("request_interval", 100),
         "USE_PROXY": crawler_config.get("use_proxy", False),
         "DEFAULT_PROXY": crawler_config.get("default_proxy", ""),
+        # 注意:上游遗留命名,字面"启用爬虫"但实际只控制 platforms 热榜
+        # RSS / keyword_search 是独立平级开关,程序入口已重构为
+        # "任一数据源启用即继续运行",此字段不再具有"总开关"语义
         "ENABLE_CRAWLER": platforms_config.get("enabled", True),
         "PLATFORMS_API_URL": _get_env_str("PLATFORMS_API_URL") or platforms_config.get("api_url", ""),
     }
