@@ -140,13 +140,126 @@ rss:
     - id: "yahoo-finance"
       name: "雅虎财经"
       url: "https://finance.yahoo.com/news/rssindex"
+      enabled: false                  # 默认关掉,与你的方向不强相关
+
+    # ─── Reddit 兜底:订阅式子版块 RSS(API 拿到凭据前用) ───
+    # 走的是 Reddit 公开的 /r/xxx/.rss 端点,不需要任何鉴权
+    # 等 keyword_search.sources.reddit 拿到 client_id 后可改用 API 路径
+    - id: "r-LocalLLaMA"
+      name: "r/LocalLLaMA"
+      url: "https://www.reddit.com/r/LocalLLaMA/new.rss"
+
+    - id: "r-MachineLearning"
+      name: "r/MachineLearning"
+      url: "https://www.reddit.com/r/MachineLearning/hot.rss"
+
+    - id: "r-singularity"
+      name: "r/singularity"
+      url: "https://www.reddit.com/r/singularity/hot.rss"
+
+    - id: "r-SaaS"
+      name: "r/SaaS"
+      url: "https://www.reddit.com/r/SaaS/new.rss"
+
+    - id: "r-MachineLearningNews"
+      name: "r/MLNews"
+      url: "https://www.reddit.com/r/MachineLearningNews/new.rss"
+      enabled: false                  # 备选,需要时再开
 
     # 自定义源示例
     # - id: "custom-feed"
     #   name: "自定义源"
     #   url: "https://example.com/feed.xml"
     #   enabled: false
-    #   max_age_days: 0               # 示例：禁用过滤，推送所有文章
+    #   max_age_days: 0               # 示例:禁用过滤,推送所有文章
+
+
+# ===============================================================
+# 3.5 数据源 - 关键词跨源检索 (B 类官方搜索 API)
+#
+# 给定关键词列表，并发分发到 GitHub / Hacker News / Reddit 的搜索 API，
+# 合并去重后作为"虚拟 RSS feed"写入存储，与订阅式 RSS 共用全套下游处理
+# (AI 筛选 / 通知 / MCP)。
+#
+# 与上方 rss 段的区别：
+#   - rss: 订阅式，被动接收源里的所有内容，靠关键词过滤
+#   - keyword_search: 主动检索，给关键词去全网搜
+#
+# 密钥位置：
+#   全部统一在 config/secrets.yaml 中(已被 .gitignore)
+#   模板见 config/secrets.example.yaml
+#
+# 兜底:secrets.yaml 字段空时按以下顺序尝试
+#   1. config.yaml 同字段(本文件,已移除密钥字段)
+#   2. 环境变量(docker/k8s 部署时方便)
+#      - GITHUB_SEARCH_TOKEN
+#      - REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET / REDDIT_USER_AGENT
+# ===============================================================
+keyword_search:
+  enabled: false                          # 总开关
+                                          # 默认关闭，在 #9 阶段配置好关键词与密钥后再开
+
+  # 关键词列表（每条都会去所有启用 provider 检索）
+  # 示例（实际值在 #9 阶段确认）：
+  #   - "Claude Code"
+  #   - "AI Agent"
+  #   - "MCP"
+  keywords: []
+
+  # 时间窗口（天），仅检索最近 N 天的内容
+  # 0 = 不限制（不建议，HN/GitHub 会返回大量历史）
+  time_range_days: 1
+
+  # 每个 provider 对每个关键词最多返回多少条
+  max_results_per_source: 20
+
+  # 请求间隔（毫秒），避免触发对方限流
+  request_interval_ms: 1500
+
+  # 网络层
+  timeout: 15
+  use_proxy: false
+  proxy_url: ""                           # 留空则复用 advanced.crawler.default_proxy
+
+  # 各 provider 非密钥配置(token / client_id / client_secret 等放 secrets.yaml)
+  sources:
+    github:
+      enabled: true                       # 推荐启用,HN 之外覆盖度最高
+                                          # token → secrets.yaml(留空走 60/h 未鉴权)
+      types:                              # 要搜的对象类型
+        - "repositories"
+        - "issues"
+      repo_sort: "updated"                # stars / forks / updated / best-match
+      issue_sort: "created"               # created / updated / comments / reactions
+      min_stars: 0                        # 仓库最低星数(仅 repositories 生效)
+      languages: []                       # 限定编程语言,如 ["python", "typescript"]
+
+    hackernews:
+      enabled: true                       # 最稳,无需 key,无限速
+      tags: "story"                       # 'story' / 'comment' / 'show_hn' / 'ask_hn'
+      min_points: 0                       # 最低 points 过滤
+
+    reddit:
+      enabled: false                      # 暂关 — 等待 Reddit Developer Platform 人工审核通过
+                                          #
+                                          # 状态记录(2026-06-11):
+                                          #   - HelpOk5296 (开发者账号) 已提交申请,bot 账号 zuixiaofei-bot 已绑定
+                                          #   - old.reddit.com/prefs/apps 创建 app 时仍被 Responsible Builder
+                                          #     Policy 拦截,等 Reddit 邮件通知审核结果
+                                          #   - 兜底:已在 rss.feeds 中订阅 r/LocalLLaMA 等子版块 RSS,
+                                          #     不依赖 API 凭据也能拿 Reddit 内容
+                                          #
+                                          # 审核通过后:
+                                          #   1. old.reddit.com/prefs/apps 创建 script 类型 app
+                                          #   2. 把 client_id/client_secret 写入 secrets.yaml
+                                          #   3. 把此处 enabled 改为 true
+                                          #   4. 视情况关掉 rss.feeds 里的 r-* 订阅(避免重复)
+      subreddits:                         # 空 = 全站,否则限定子版块
+        - "LocalLLaMA"
+        - "MachineLearning"
+        - "singularity"
+      sort: "new"                         # relevance / new / top / hot / comments
+      time_filter: "day"                  # 自动覆盖:根据 time_range_days 推断
 
 
 # ===============================================================
@@ -253,55 +366,34 @@ display:
 # ===============================================================
 # 6. 推送通知
 #
-# ⚠️ 安全警告：webhook 地址不要公开！
-#    GitHub 部署请将 webhook 填入 GitHub Secrets，不要写在这里
+# ⚠️ 密钥(webhook_url / bot_token / 密码 / 完整 URL 等)统一放在
+#    config/secrets.yaml,本文件只放非敏感的渠道配置项。
+#    模板见 config/secrets.example.yaml
 #
-# 📌 多账号：分号(;)分隔，如 "url1;url2;url3"
-#    配对项（如 Telegram token 和 chat_id）数量必须一致
+# 📌 多账号:分号(;)分隔,如 "url1;url2;url3"
+#    配对项(如 Telegram token 和 chat_id)数量必须一致
 # ===============================================================
 notification:
-  enabled: true                       # 是否启用通知功能（true=启用, false=关闭）—— 总开关
-                                      # 开启 schedule 后此项仍为总开关：false=永远不推送，true=由调度控制
+  enabled: true                       # 总开关(true=启用 false=关闭)
+                                      # 开启 schedule 时仍为总开关:false=永不推送,true=由调度控制
 
-  # 推送渠道配置
+  # 各渠道的"非密钥"配置项
+  # 凡是 webhook_url / token / 密码 / 邮箱地址等敏感字段 → secrets.yaml
   channels:
-    feishu:
-      webhook_url: ""                 # 飞书机器人 webhook URL
-
-    dingtalk:
-      webhook_url: ""                 # 钉钉机器人 webhook URL
-
     wework:
-      webhook_url: ""                 # 企业微信机器人 webhook URL
-      msg_type: "markdown"            # 消息类型：markdown(群机器人) | text(个人微信应用)
-
-    telegram:
-      bot_token: ""                   # Telegram Bot Token
-      chat_id: ""                     # Telegram Chat ID
+      msg_type: "markdown"            # markdown(群机器人) | text(个人微信应用)
 
     email:
-      from: ""                        # 发件人邮箱地址
-      password: ""                    # 发件人邮箱密码或授权码
-      to: ""                          # 收件人邮箱，多个用逗号分隔
-      smtp_server: ""                 # SMTP 服务器（可选，留空自动识别）
-      smtp_port: ""                   # SMTP 端口（可选，留空自动识别）
+      smtp_server: ""                 # SMTP 服务器(留空自动识别)
+      smtp_port: ""                   # SMTP 端口(留空自动识别)
 
     ntfy:
-      server_url: "https://ntfy.sh"   # ntfy 服务器地址（可改为自托管）
-      topic: ""                       # ntfy 主题名称
-      token: ""                       # ntfy 访问令牌（可选，用于私有主题）
-
-    bark:
-      url: ""                         # Bark 推送 URL（格式：https://api.day.app/your_device_key）
-
-    slack:
-      webhook_url: ""                 # Slack Incoming Webhook URL
+      server_url: "https://ntfy.sh"   # ntfy 服务器地址(可改自托管)
 
     generic_webhook:
-      webhook_url: ""                 # 通用 Webhook URL（支持 Discord、Matrix、IFTTT 等）
-      payload_template: ""            # JSON 模板，支持 {title} 和 {content} 占位符
-                                      # 示例：{"content": "{content}"}
-                                      # 留空则使用默认格式：{"title": "{title}", "content": "{content}"}
+      payload_template: ""            # JSON 模板,支持 {title} 和 {content} 占位符
+                                      # 示例:{"content": "{content}"}
+                                      # 留空使用默认 {"title": "...", "content": "..."}
 
 
 # ===============================================================
@@ -326,21 +418,12 @@ storage:
     data_dir: "output"                # 数据目录
     retention_days: 0                 # 保留天数（0=永久保留）
 
-  # 远程存储配置（S3 兼容协议）
-  # 支持: Cloudflare R2, 阿里云 OSS, 腾讯云 COS, AWS S3, MinIO 等
-  # 建议将敏感信息配置在 GitHub Secrets 或环境变量中
+  # 远程存储配置(S3 兼容协议:R2 / OSS / COS / AWS S3 / MinIO 等)
+  # ⚠️ endpoint_url / bucket_name / access_key_id / secret_access_key
+  #    全部统一放在 config/secrets.yaml,本文件只保留非敏感字段
   remote:
-    retention_days: 0                 # 保留天数（0=永久保留）
-
-    # S3 兼容配置（或使用环境变量 S3_ENDPOINT_URL 等）
-    endpoint_url: ""                  # 服务端点
-                                      # Cloudflare R2: https://<account_id>.r2.cloudflarestorage.com
-                                      # 阿里云 OSS: https://oss-cn-hangzhou.aliyuncs.com
-                                      # 腾讯云 COS: https://cos.ap-guangzhou.myqcloud.com
-    bucket_name: ""                   # 存储桶名称
-    access_key_id: ""                 # 访问密钥 ID
-    secret_access_key: ""             # 访问密钥
-    region: ""                        # 区域（可选，部分服务商需要）
+    retention_days: 0                 # 保留天数(0=永久保留)
+    region: ""                        # 区域(可选,部分服务商需要)
 
   # 数据拉取（从远程同步到本地，用于 MCP Server 等场景）
   pull:
@@ -365,8 +448,8 @@ ai:
 
   model: "deepseek/deepseek-v4-flash"
 
-  api_key: ""                       # API Key（建议使用环境变量 AI_API_KEY）
-  
+  # ⚠️ api_key 统一在 config/secrets.yaml 配置(参考 secrets.example.yaml)
+
   api_base: ""                      # 自定义 API 地址（可选，绝大多数情况留空即可）
                                     #
                                     # ❓ 什么时候需要填？

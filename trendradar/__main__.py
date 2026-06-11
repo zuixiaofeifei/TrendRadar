@@ -25,7 +25,12 @@ from trendradar.core import load_config, parse_multi_account_config, validate_pa
 from trendradar.core.analyzer import convert_keyword_stats_to_platform_stats
 from trendradar.crawler import DataFetcher
 from trendradar.storage import convert_crawl_results_to_news_data
-from trendradar.utils.time import DEFAULT_TIMEZONE, is_within_days, calculate_days_old
+from trendradar.utils.time import (
+    DEFAULT_TIMEZONE,
+    is_within_days,
+    calculate_days_old,
+    get_configured_time,
+)
 from trendradar.ai import AIAnalyzer, AIAnalysisResult
 from trendradar.core.scheduler import ResolvedSchedule
 from trendradar.core.cdn import fetch_with_fallback
@@ -1132,9 +1137,98 @@ class NewsAnalyzer:
 
         return results, id_to_name, failed_ids
 
+    def _run_keyword_search(self, *, date: str, crawl_time: str):
+        """
+        执行关键词跨源检索
+
+        Args:
+            date: 抓取日期(对齐 RSS 流的日期)
+            crawl_time: 抓取时刻
+
+        Returns:
+            RSSData 对象(失败/未启用返回 None)
+        """
+        if not self.ctx.keyword_search_enabled:
+            return None
+        try:
+            from trendradar.search import SearchRouter                # noqa: WPS433
+        except Exception as exc:                                     # noqa: BLE001
+            print(f"[Search] 模块加载失败: {exc}")
+            return None
+
+        try:
+            search_config = self.ctx.build_keyword_search_config()
+        except Exception as exc:                                     # noqa: BLE001
+            print(f"[Search] 配置加载失败: {exc}")
+            return None
+
+        router = SearchRouter(search_config)
+        if not router.is_active:
+            print("[Search] 已启用但无可用 provider 或关键词为空,跳过")
+            return None
+
+        try:
+            search_data, errors = router.run_all()
+        except Exception as exc:                                     # noqa: BLE001
+            print(f"[Search] 检索执行失败: {exc}")
+            return None
+
+        # 对齐主流时间戳,避免存储层因时间不一致产生分歧
+        search_data.date = date or search_data.date
+        search_data.crawl_time = crawl_time or search_data.crawl_time
+        if errors:
+            print(f"[Search] 共 {len(errors)} 个 provider:keyword 组合失败")
+        return search_data
+
+    @staticmethod
+    def _merge_search_into_rss(rss_data, search_data):
+        """
+        把搜索 RSSData 合并进 RSS 流(同 feed_id 列表追加去重)
+
+        - feed_id 完全独立(search:xxx vs 用户配置的 RSS id),不会冲突
+        - id_to_name 直接合并
+        - failed_ids 不引入(搜索失败已在内部日志)
+        """
+        if search_data is None or search_data.get_total_count() == 0:
+            return rss_data
+
+        for feed_id, items in search_data.items.items():
+            rss_data.items.setdefault(feed_id, []).extend(items)
+        rss_data.id_to_name.update(search_data.id_to_name)
+        return rss_data
+
+    def _crawl_search_only(self) -> Tuple[Optional[List[Dict]], Optional[List[Dict]], Optional[List[Dict]], set]:
+        """
+        RSS 关闭、仅关键词检索启用时的轻量路径
+
+        把搜索结果当作虚拟 RSS 流,落库 + 走相同的 _process_rss_data_by_mode 链路
+        """
+        from trendradar.storage.base import RSSData                    # noqa: WPS433
+
+        timezone = self.ctx.config.get("TIMEZONE", DEFAULT_TIMEZONE)
+        now = get_configured_time(timezone)
+        crawl_date = now.strftime("%Y-%m-%d")
+        crawl_time = now.strftime("%H:%M")
+
+        search_data = self._run_keyword_search(
+            date=crawl_date, crawl_time=crawl_time,
+        )
+        if search_data is None or search_data.get_total_count() == 0:
+            print("[Search] 无任何检索结果,跳过 RSS 流")
+            return None, None, None, set()
+
+        self._rss_source_total = len(search_data.items)
+        self._rss_source_failed = 0
+
+        if not self.storage_manager.save_rss_data(search_data):
+            print("[Search] 检索数据落库失败")
+            return None, None, None, set()
+        print("[Search] 检索数据已作为虚拟 RSS feed 落库")
+        return self._process_rss_data_by_mode(search_data)
+
     def _crawl_rss_data(self) -> Tuple[Optional[List[Dict]], Optional[List[Dict]], Optional[List[Dict]], set]:
         """
-        执行 RSS 数据抓取
+        执行 RSS 数据抓取(并合并关键词跨源检索结果)
 
         Returns:
             (rss_items, rss_new_items, raw_rss_items, rss_new_urls) 元组：
@@ -1144,7 +1238,10 @@ class NewsAnalyzer:
             - rss_new_urls: 原始新增 RSS 条目的 URL 集合（用于 AI 模式 is_new 检测）
             如果未启用或失败返回 (None, None, None, set())
         """
+        # 当 RSS 关闭但关键词检索启用时,走纯检索路径(走 RSS pipeline 复用下游)
         if not self.ctx.rss_enabled:
+            if self.ctx.keyword_search_enabled:
+                return self._crawl_search_only()
             return None, None, None, set()
 
         rss_feeds = self.ctx.rss_feeds
@@ -1215,6 +1312,15 @@ class NewsAnalyzer:
 
             self._rss_source_total = len(feeds)
             self._rss_source_failed = len(rss_data.failed_ids)
+
+            # 跨源关键词检索:输出 RSSData 后合并入主流,
+            # 下游 storage / AIFilter / 通知 / MCP 零改动消费
+            search_data = self._run_keyword_search(
+                date=rss_data.date,
+                crawl_time=rss_data.crawl_time,
+            )
+            if search_data is not None and search_data.get_total_count() > 0:
+                rss_data = self._merge_search_into_rss(rss_data, search_data)
 
             # 保存到存储后端
             if self.storage_manager.save_rss_data(rss_data):

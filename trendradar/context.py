@@ -119,6 +119,35 @@ class AppContext:
         return self.rss_config.get("FEEDS", [])
 
     @property
+    def keyword_search_raw_config(self) -> Dict:
+        """获取关键词跨源检索原始配置(YAML 段)"""
+        return self.config.get("KEYWORD_SEARCH", {})
+
+    def build_keyword_search_config(self):
+        """
+        构造 SearchConfig 对象,密钥在此时从环境变量兜底
+
+        延迟构造的好处:
+        - 主流程按需调用,未启用时零开销
+        - 环境变量变更后立即生效,不需要 ctx 持有过期密钥
+        """
+        from trendradar.search import SearchConfig                # noqa: WPS433
+        advanced_crawler = self.config.get("ADVANCED", {}).get("CRAWLER", {})
+        default_proxy = self.rss_config.get("PROXY_URL", "") \
+            or advanced_crawler.get("DEFAULT_PROXY", "") \
+            or ""
+        return SearchConfig.from_dict(
+            self.keyword_search_raw_config,
+            timezone_name=self.timezone,
+            default_proxy_url=default_proxy,
+        )
+
+    @property
+    def keyword_search_enabled(self) -> bool:
+        """关键词跨源检索是否启用(只看 YAML 顶层 enabled)"""
+        return bool(self.keyword_search_raw_config.get("enabled", False))
+
+    @property
     def display_mode(self) -> str:
         """获取显示模式 (keyword | platform)"""
         return self.config.get("DISPLAY_MODE", "keyword")

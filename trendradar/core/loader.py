@@ -50,6 +50,54 @@ def _get_env_str(key: str, default: str = "") -> str:
     return os.environ.get(key, "").strip() or default
 
 
+def _deep_merge_secrets(base: Dict, overlay: Optional[Dict]) -> Dict:
+    """
+    把 secrets.yaml 的内容深合并进主 config_data
+
+    规则:
+    - overlay 字段非空时覆盖 base 同名字段
+    - 双方都是 dict 则递归合并(支持嵌套结构如 sources.github.token)
+    - overlay 中 None / 空字符串 / 空列表 视为未设置,跳过不覆盖
+      (避免 secrets.yaml 模板里的空占位字段把真正的 config.yaml 清空)
+    """
+    if not overlay:
+        return base
+    result = dict(base) if isinstance(base, dict) else {}
+    for key, val in overlay.items():
+        if val is None:
+            continue
+        if isinstance(val, str) and not val.strip():
+            continue
+        if isinstance(val, (list, dict)) and not val:
+            continue
+        base_val = result.get(key)
+        if isinstance(val, dict) and isinstance(base_val, dict):
+            result[key] = _deep_merge_secrets(base_val, val)
+        else:
+            result[key] = val
+    return result
+
+
+def _load_secrets_file(config_dir: str) -> Optional[Dict]:
+    """
+    读取 config/secrets.yaml(可选)
+
+    设计:
+    - 文件不存在 → 静默返回 None,不报错(允许全部走环境变量/yaml 主文件)
+    - 文件存在但解析失败 → 抛出,密钥配置错误必须显式暴露
+    - 强烈建议把此文件加入 .gitignore
+    """
+    secrets_path = Path(config_dir) / "secrets.yaml"
+    if not secrets_path.exists():
+        return None
+    with open(secrets_path, "r", encoding="utf-8") as fp:
+        data = yaml.safe_load(fp) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"secrets.yaml 顶层必须是字典: {secrets_path}")
+    print(f"密钥文件加载成功: {secrets_path}")
+    return data
+
+
 def _load_app_config(config_data: Dict) -> Dict:
     """加载应用配置"""
     app_config = config_data.get("app", {})
@@ -219,6 +267,15 @@ def _load_rss_config(config_data: Dict) -> Dict:
             "MAX_AGE_DAYS": max_age_days,
         },
     }
+
+
+def _load_keyword_search_config(config_data: Dict) -> Dict:
+    """
+    加载 keyword_search(跨源关键词检索)原始配置段
+
+    密钥不在此处兜底,延迟到 SearchConfig.from_dict() 时从环境变量读取
+    """
+    return config_data.get("keyword_search", {}) or {}
 
 
 def _load_display_config(config_data: Dict) -> Dict:
@@ -551,6 +608,13 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
 
     print(f"配置文件加载成功: {config_path}")
 
+    # 密钥独立文件(可选,优先级最高,见 docs/secrets.md):
+    #   secrets.yaml 字段非空 > config.yaml 字段 > 环境变量(下游 fetcher 内部兜底)
+    config_dir = str(Path(config_path).parent) if config_path else "config"
+    secrets_data = _load_secrets_file(config_dir)
+    if secrets_data:
+        config_data = _deep_merge_secrets(config_data, secrets_data)
+
     # 合并所有配置
     config = {}
 
@@ -581,6 +645,9 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
 
     # RSS 配置
     config["RSS"] = _load_rss_config(config_data)
+
+    # 关键词跨源检索配置(B 类 fetcher)
+    config["KEYWORD_SEARCH"] = _load_keyword_search_config(config_data)
 
     # AI 模型共享配置
     config["AI"] = _load_ai_config(config_data)
