@@ -1112,7 +1112,13 @@ class NewsAnalyzer:
         return True
 
     def _crawl_data(self) -> Tuple[Dict, Dict, List]:
-        """执行数据爬取"""
+        """执行数据爬取(国内热榜)"""
+        # 总开关:platforms.enabled=false 时跳过整段抓取
+        # 下游 _execute_mode_strategy 能正确处理空结果
+        if not self.ctx.config.get("ENABLE_CRAWLER", True):
+            print("[热榜] platforms.enabled=false,跳过热榜抓取")
+            return {}, {}, []
+
         ids = []
         domain_rules = {}
         for platform in self.ctx.platforms:
