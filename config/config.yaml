@@ -196,15 +196,17 @@ rss:
 #   REDDIT_USER_AGENT         (可选,格式 "platform:appname:v1 (by /u/xxx)")
 # ===============================================================
 keyword_search:
-  enabled: false                          # 总开关
-                                          # 默认关闭，在 #9 阶段配置好关键词与密钥后再开
+  enabled: true                           # 总开关
 
   # 关键词列表（每条都会去所有启用 provider 检索）
-  # 示例（实际值在 #9 阶段确认）：
-  #   - "Claude Code"
-  #   - "AI Agent"
-  #   - "MCP"
-  keywords: []
+  # 数量公式: 关键词数 × 启用 provider 数 × max_results_per_source = 单次抓取上限
+  # 当前: 5 × 2(github+hn) × 20 = 200 条/轮
+  keywords:
+    - "Claude Code"
+    - "MCP server"
+    - "AI Agent"
+    - "LangGraph"
+    - "RAG"
 
   # 时间窗口（天），仅检索最近 N 天的内容
   # 0 = 不限制（不建议，HN/GitHub 会返回大量历史）
