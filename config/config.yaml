@@ -62,7 +62,9 @@ schedule:
 #     只要 api_url 不是你自己部署的实例，都推荐配置 expected_domain
 # ===============================================================
 platforms:
-  enabled: true                         # 是否启用热榜平台抓取（true=启用, false=关闭）
+  enabled: false                        # 是否启用热榜平台抓取（true=启用, false=关闭）
+                                        # 当前关闭:国内中文热榜与 AI/创业方向相关性弱
+                                        # 想看大众热点可改回 true
   api_url: ""                            # 热榜数据 API 地址（留空使用默认地址）
                                         # 如果你自行部署了 newsnow，填入你的地址，如: https://your-domain.com/api/s
   sources:
@@ -207,6 +209,7 @@ keyword_search:
     - "AI Agent"
     - "LangGraph"
     - "RAG"
+    - "DeepSeek"
 
   # 时间窗口（天），仅检索最近 N 天的内容
   # 0 = 不限制（不建议，HN/GitHub 会返回大量历史）
