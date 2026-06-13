@@ -87,6 +87,13 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - MCP_PORT=${MCP_PORT:-3333}
+      # J1 浏览器接管 (browser_* tools 用): 连 trendradar-chrome
+      - CHROME_HOST=${CHROME_HOST:-trendradar-chrome}
+      - CHROME_PORT=${CHROME_PORT:-9222}
+      # 推 QR 飞书消息时拼公网 URL 用 (手机扫码必须)
+      - PUBLIC_HOST=${PUBLIC_HOST:-}
+      - WEBSERVER_PORT=${WEBSERVER_PORT:-8080}
+      - FEISHU_WEBHOOK_URL=${FEISHU_WEBHOOK_URL:-}
 
   # ─────────────────────────────────────────────────────────
   # Chrome CDP 容器 — 给 trendradar 用作 J1 浏览器抓取

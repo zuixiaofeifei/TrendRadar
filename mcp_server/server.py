@@ -1112,6 +1112,212 @@ async def send_notification(
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
+# ==================== 浏览器工具 (J1 - 远程 Chrome 接管) ====================
+
+from .tools import browser as _browser_tools
+
+
+@mcp.tool
+async def browser_help() -> str:
+    """获取浏览器工具的完整使用指南 (SKILL.md).
+
+    **强烈建议**: 任何用户首次要你做浏览器操作时, 先调一次这个工具看完整说明.
+    含登录扫码流程范例、已知站点 selector、注意事项等.
+
+    Returns: SKILL.md 的完整内容 (Markdown 字符串)
+    """
+    from pathlib import Path
+    skill_path = Path(__file__).parent / "skills" / "browser" / "SKILL.md"
+    try:
+        return skill_path.read_text(encoding="utf-8")
+    except Exception as e:
+        return f"# Browser Skill\n\n(SKILL.md 读取失败: {e})"
+
+
+@mcp.tool
+async def browser_health() -> str:
+    """检查远程 Chrome 健康 + 当前 page 数. **每次开始浏览器任务前调一次**."""
+    result = await _browser_tools.health()
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def browser_navigate(
+    url: str,
+    new_tab: bool = False,
+    wait_until: str = "domcontentloaded",
+    timeout_ms: int = 30000,
+) -> str:
+    """打开 URL.
+
+    Args:
+        url: 目标 URL
+        new_tab: True 开新 tab 并切到这个 tab (并存场景); False 当前 tab 跳转 (默认)
+        wait_until: "load" / "domcontentloaded" / "networkidle"
+        timeout_ms: 默认 30s
+
+    Returns: JSON {success, url, title, new_tab}
+    """
+    result = await _browser_tools.navigate(url, new_tab=new_tab, wait_until=wait_until, timeout_ms=timeout_ms)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def browser_snapshot() -> str:
+    """获取当前 active page 的可交互元素列表 (带 @e refs).
+
+    每个元素带唯一 ref (如 e3), 后续 click/fill 用 "@e3" 比 CSS 类名稳.
+
+    Returns: JSON {url, title, element_count, elements:[{ref, tag, role, name, ...}]}
+    """
+    result = await _browser_tools.snapshot()
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def browser_click(selector: str, timeout_ms: int = 10000) -> str:
+    """点击元素. selector 支持 @eN (来自 snapshot) 或 CSS.
+
+    Returns: JSON {success, selector_resolved, tag, text}
+    """
+    result = await _browser_tools.click(selector, timeout_ms=timeout_ms)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def browser_fill(selector: str, value: str, timeout_ms: int = 10000) -> str:
+    """填写 input/textarea/contenteditable. 会清空原值再填.
+
+    Returns: JSON {success, mode, tag}, mode = "value" | "contenteditable" | "fallback"
+    """
+    result = await _browser_tools.fill(selector, value, timeout_ms=timeout_ms)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def browser_evaluate(code: str) -> str:
+    """在当前 page 跑 JS, 必须 JSON 可序列化返回值.
+
+    建议 IIFE 包裹 + JSON.stringify 压缩输出避免浪费 token.
+
+    Returns: JSON {success, type, value}
+    """
+    result = await _browser_tools.evaluate(code)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def browser_screenshot(
+    selector: Optional[str] = None,
+    full_page: bool = False,
+    label: str = "screenshot",
+) -> str:
+    """截图. selector=None 截整页; 否则截指定元素 (支持 @eN 或 CSS).
+
+    存到 /app/output/qr/, 返回 public_url 可手机/浏览器直接看.
+
+    Returns: JSON {success, path, public_url, size_bytes}
+    """
+    result = await _browser_tools.screenshot(selector=selector, full_page=full_page, label=label)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def browser_push_qr_to_feishu(
+    selector: str,
+    label: str = "扫码",
+    expire_minutes: int = 3,
+) -> str:
+    """截 QR 元素 + 推飞书带 URL. 用户手机扫码登录的核心工具.
+
+    完整流程见 browser_help (扫码登录范例).
+
+    Returns: JSON {success, qr_path, public_url, feishu_sent}
+    """
+    result = await _browser_tools.push_qr_to_feishu(selector, label=label, expire_minutes=expire_minutes)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def browser_wait_for(
+    selector: str,
+    state: str = "visible",
+    timeout_ms: int = 30000,
+) -> str:
+    """等元素出现/消失. 适合 SPA 渲染 + 扫码完成检测.
+
+    state: "visible" (默认) / "hidden" / "attached" / "detached"
+    扫码场景给 timeout_ms=120000 (2 分钟).
+
+    Returns: JSON {success, found, ...}
+    """
+    result = await _browser_tools.wait_for(selector, state=state, timeout_ms=timeout_ms)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def browser_list_tabs() -> str:
+    """列所有 tab. is_active=True 是当前操作目标.
+
+    Returns: JSON {count, tabs:[{index, url, title, is_active}]}
+    """
+    result = await _browser_tools.list_tabs()
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def browser_find_tab(url_pattern: str) -> str:
+    """找 URL 含 url_pattern 子串的 tab 并切为 active.
+
+    Returns: JSON {success, url, title, index} 或 {success: False, error}
+    """
+    result = await _browser_tools.find_tab(url_pattern)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def browser_close_tab() -> str:
+    """关 active tab. 最后一个 tab 会自动新建空白 tab 占位.
+
+    Returns: JSON {success, closed_url}
+    """
+    result = await _browser_tools.close_tab()
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def browser_get_url() -> str:
+    """当前 page URL + title. 判断登录态最常用.
+
+    Returns: JSON {url, title}
+    """
+    result = await _browser_tools.get_url()
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def browser_get_html(selector: Optional[str] = None, max_chars: int = 100000) -> str:
+    """⚠️ 慎用 — 全页 HTML 几 MB 浪费 token. 优先用 snapshot/evaluate.
+
+    selector=None 取整页 documentElement.outerHTML.
+    max_chars 截断防爆 token.
+
+    Returns: JSON {html, truncated, original_length}
+    """
+    result = await _browser_tools.get_html(selector=selector, max_chars=max_chars)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool
+async def browser_get_cookies(url_pattern: Optional[str] = None) -> str:
+    """看 cookies (调试登录态). 不返回 value 避免泄露.
+
+    Returns: JSON {count, cookies:[{name, domain, path, expires, ...}]}
+    """
+    result = await _browser_tools.get_cookies(url_pattern=url_pattern)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
 # ==================== 启动入口 ====================
 
 def run_server(
@@ -1197,6 +1403,24 @@ def run_server(
     print("    24. get_channel_format_guide  - 获取渠道格式化策略指南（提示词）")
     print("    25. get_notification_channels - 获取已配置的通知渠道状态")
     print("    26. send_notification         - 向通知渠道发送消息（自动适配格式）")
+    print()
+    print("    === J1 浏览器接管 (远程 Chrome via trendradar-chrome) ===")
+    print("    27. browser_help              - 读 SKILL.md (首次任务前调一次)")
+    print("    28. browser_health            - Chrome 健康检查")
+    print("    29. browser_navigate          - 打开 URL (支持 new_tab)")
+    print("    30. browser_snapshot          - 拿可交互元素 (带 @e refs)")
+    print("    31. browser_click             - 点击 (@eN 或 CSS)")
+    print("    32. browser_fill              - 填表 (input/textarea/contenteditable)")
+    print("    33. browser_evaluate          - 跑 JS")
+    print("    34. browser_screenshot        - 截图 (整页/元素)")
+    print("    35. browser_push_qr_to_feishu - 截 QR + 推飞书 (扫码登录核心)")
+    print("    36. browser_wait_for          - 等元素出现/消失")
+    print("    37. browser_list_tabs         - 列所有 tab")
+    print("    38. browser_find_tab          - 切到匹配 URL 的 tab")
+    print("    39. browser_close_tab         - 关 active tab")
+    print("    40. browser_get_url           - 拿当前 URL+title")
+    print("    41. browser_get_html          - 拿 HTML (慎用)")
+    print("    42. browser_get_cookies       - 看 cookies (调试登录态)")
     print("=" * 60)
     print()
 

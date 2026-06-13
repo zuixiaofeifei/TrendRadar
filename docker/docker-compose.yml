@@ -83,6 +83,12 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - MCP_PORT=${MCP_PORT:-3333}
+      # J1 浏览器接管 (browser_* tools 用)
+      - CHROME_HOST=${CHROME_HOST:-trendradar-chrome}
+      - CHROME_PORT=${CHROME_PORT:-9222}
+      - PUBLIC_HOST=${PUBLIC_HOST:-}
+      - WEBSERVER_PORT=${WEBSERVER_PORT:-8080}
+      - FEISHU_WEBHOOK_URL=${FEISHU_WEBHOOK_URL:-}
 
   # ─────────────────────────────────────────────────────────
   # Chrome CDP 容器 — image 版 (build 同 docker-compose-build.yml)
