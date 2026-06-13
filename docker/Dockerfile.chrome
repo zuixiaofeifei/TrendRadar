@@ -17,9 +17,11 @@ ENV DISPLAY=:99 \
 RUN sed -i 's|http://deb.debian.org|http://mirrors.tencent.com|g' /etc/apt/sources.list.d/debian.sources \
  && sed -i 's|http://security.debian.org|http://mirrors.tencent.com|g' /etc/apt/sources.list.d/debian.sources
 
-# 基础工具 + Xvfb + 中文字体 (二维码渲染必备)
+# 基础工具 + Xvfb + 中文字体 + socat (Chrome 安全策略下必须用 socat 转发)
+# Chrome 111+ 即便给 --remote-debugging-address=0.0.0.0 也只绑 127.0.0.1,
+# 用 socat 把容器外网 IP 上的 9222 转发到 Chrome 的 localhost:19222
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl ca-certificates gnupg tini \
+        curl ca-certificates gnupg tini socat \
         xvfb fonts-noto-cjk fonts-liberation \
  && rm -rf /var/lib/apt/lists/*
 
