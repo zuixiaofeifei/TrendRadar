@@ -32,6 +32,7 @@ RUN pip install --no-cache-dir \
 # 再复制项目代码并安装项目本身
 COPY docker/manage.py .
 COPY trendradar/ ./trendradar/
+COPY scripts/ ./scripts/
 #RUN --mount=type=cache,target=/root/.cache/uv \
 #    uv sync --locked --no-dev
 
