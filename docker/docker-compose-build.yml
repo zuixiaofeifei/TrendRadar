@@ -57,6 +57,11 @@ services:
       - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID:-}
       - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET:-}
       - REDDIT_USER_AGENT=${REDDIT_USER_AGENT:-}
+      # J1 浏览器抓取 (Chrome CDP, 通过 docker network 互访)
+      - CHROME_HOST=${CHROME_HOST:-trendradar-chrome}
+      - CHROME_PORT=${CHROME_PORT:-9222}
+      # PUBLIC_HOST 用于推送 QR URL 给用户手机扫码 (留空 → localhost,手机扫不到)
+      - PUBLIC_HOST=${PUBLIC_HOST:-}
       # 运行模式
       - CRON_SCHEDULE=${CRON_SCHEDULE:-*/30 * * * *}
       - RUN_MODE=${RUN_MODE:-cron}
@@ -79,3 +84,34 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - MCP_PORT=${MCP_PORT:-3333}
+
+  # ─────────────────────────────────────────────────────────
+  # Chrome CDP 容器 — 给 trendradar 用作 J1 浏览器抓取
+  # 仅在 docker network 内可达,不映射端口到 host
+  # 通过 `http://trendradar-chrome:9222` 内部访问
+  # ─────────────────────────────────────────────────────────
+  trendradar-chrome:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.chrome
+    container_name: trendradar-chrome
+    restart: unless-stopped
+
+    # Chrome 需要 >64M 共享内存,默认 docker shm 太小会爆
+    shm_size: 1gb
+
+    # 不映射到 host, 仅 docker network 内部可达
+    expose:
+      - "9222"
+
+    volumes:
+      # 持久化 Chrome 用户数据 (Cookies, IndexedDB, localStorage)
+      # 登录态全在这里,容器重启不丢
+      - ../output/chrome-data:/data
+
+    environment:
+      - TZ=Asia/Shanghai
+
+    # 限制资源,避免吃光宿主机内存 (Chrome 容易膨胀)
+    mem_limit: 1g
+    cpus: 1.0

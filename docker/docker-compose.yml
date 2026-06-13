@@ -55,6 +55,11 @@ services:
       - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID:-}
       - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET:-}
       - REDDIT_USER_AGENT=${REDDIT_USER_AGENT:-}
+      # J1 浏览器抓取 (Chrome CDP, 通过 docker network 互访)
+      - CHROME_HOST=${CHROME_HOST:-trendradar-chrome}
+      - CHROME_PORT=${CHROME_PORT:-9222}
+      # PUBLIC_HOST 用于推送 QR URL 给用户手机扫码 (留空 → localhost,手机扫不到)
+      - PUBLIC_HOST=${PUBLIC_HOST:-}
       # 运行模式
       - CRON_SCHEDULE=${CRON_SCHEDULE:-*/30 * * * *}
       - RUN_MODE=${RUN_MODE:-cron}
@@ -75,3 +80,23 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - MCP_PORT=${MCP_PORT:-3333}
+
+  # ─────────────────────────────────────────────────────────
+  # Chrome CDP 容器 — image 版 (build 同 docker-compose-build.yml)
+  # 如果还没推镜像到 docker hub,请用 docker-compose-build.yml
+  # ─────────────────────────────────────────────────────────
+  trendradar-chrome:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.chrome
+    container_name: trendradar-chrome
+    restart: unless-stopped
+    shm_size: 1gb
+    expose:
+      - "9222"
+    volumes:
+      - ../output/chrome-data:/data
+    environment:
+      - TZ=Asia/Shanghai
+    mem_limit: 1g
+    cpus: 1.0

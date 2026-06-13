@@ -1,0 +1,44 @@
+# ============================================================
+# Chrome CDP 容器 - 给 trendradar 用作 J1 浏览器抓取
+#
+# 架构: tini → Xvfb (虚拟显示器 :99) → google-chrome-stable
+#       Chrome 监听 9222 (CDP), 用 --user-data-dir=/data 持久化
+#
+# 安全: CDP 监听 0.0.0.0 但 docker-compose 不映射端口到 host,
+#       仅 docker internal network 内可达
+# ============================================================
+FROM debian:bookworm-slim
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV DISPLAY=:99 \
+    LANG=C.UTF-8
+
+# 用腾讯镜像加速 apt (国内构建快)
+RUN sed -i 's|http://deb.debian.org|http://mirrors.tencent.com|g' /etc/apt/sources.list.d/debian.sources \
+ && sed -i 's|http://security.debian.org|http://mirrors.tencent.com|g' /etc/apt/sources.list.d/debian.sources
+
+# 基础工具 + Xvfb + 中文字体 (二维码渲染必备)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates gnupg tini \
+        xvfb fonts-noto-cjk fonts-liberation \
+ && rm -rf /var/lib/apt/lists/*
+
+# 装 Google Chrome (官方源, 之前 W1 验证过 dl.google.com 在腾讯云可达)
+RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | \
+        gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
+ && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
+        > /etc/apt/sources.list.d/google-chrome.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends google-chrome-stable \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY docker/chrome-entrypoint.sh /usr/local/bin/chrome-entrypoint.sh
+RUN chmod +x /usr/local/bin/chrome-entrypoint.sh
+
+VOLUME ["/data"]
+EXPOSE 9222
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -sf http://127.0.0.1:9222/json/version || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/chrome-entrypoint.sh"]
