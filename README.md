@@ -5,6 +5,7 @@
 > 16 个 MCP 浏览器工具.
 >
 > 这份 README 就是部署 + 配置 + 日常使用全套手册.
+> 不会用 MCP 提问?看 [README-MCP-FAQ.md](README-MCP-FAQ.md)(数据查询类工具的 Q&A 范例).
 
 ---
 
