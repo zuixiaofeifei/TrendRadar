@@ -15,7 +15,8 @@
 - [日常运行](#日常运行)
 - [自定义信息源与关键词](#自定义信息源与关键词)
 - [查看数据](#查看数据)
-- [MCP 接入(让 Claude/Cherry Studio 自然语言查询)](#mcp-接入)
+- [MCP 接入(42 工具,Claude Code / Cherry Studio 等)](#mcp-接入)
+- [J1 远程浏览器接管(扫码登录站点)](#j1-远程浏览器接管)
 - [常见操作](#常见操作)
 - [故障排查](#故障排查)
 - [已知限制](#已知限制)
@@ -25,7 +26,7 @@
 
 ## 项目能做什么
 
-**一句话**:订阅 + 跨源关键词检索 AI/科技/创业方向内容,代码清洗 → AI 筛选打分 → 飞书推送 / 飞书机器人查询。
+**一句话**:订阅 + 跨源关键词检索 + 远程浏览器接管, 抓 AI/科技/创业方向内容,代码清洗 → AI 筛选打分 → 飞书推送 / MCP 自然语言查询 / 任意 AI Agent 实时操控浏览器抓 J1 类登录态站点。
 
 **具体能力**:
 
@@ -34,12 +35,13 @@
 | RSS 订阅 | 各种官方原生 RSS、博客、播客 RSS |
 | Reddit 子版块 RSS | 不需要 OAuth,r/LocalLLaMA 等直接订阅 |
 | 关键词跨源检索 | 给关键词 → 同时去 GitHub Search / HN Algolia / Reddit OAuth 检索 |
+| **远程浏览器接管(J1)** | 服务器跑真 Chrome + 持久登录态,AI 手机扫码一次永久复用,任意站点都能抓 |
 | AI 智能筛选 | 用自然语言描述你的兴趣,AI 给每条打分(0~1) |
 | AI 摘要打标签 | 单条 DeepSeek 处理,输出摘要+标签+评分 |
 | 多渠道推送 | 飞书 / 钉钉 / 企微 / TG / 邮件 / ntfy / Bark / Slack / Webhook |
 | HTML 报告 | 浏览器可看,有暗色模式 / 搜索 / 复制等 |
 | 调度 | 时段化:早晚汇总 / 工作时段 / 自定义 |
-| MCP Server | 21 个工具,可以让 Claude/Cherry Studio 自然语言查信息库 |
+| MCP Server | **42 个工具**(26 数据 + 16 浏览器),Claude Code / Cursor / Cherry Studio 自然语言操作 |
 
 **不会做的事**(显式排除):
 - 国内 11 个全民热榜聚合(可关掉)
@@ -51,17 +53,28 @@
 ## 架构概览
 
 ```
-数据源 (R1/R2/B)
-   ↓
-归一化 → SQLite 落库
-   ↓
-代码处理 (清洗 / 去重 / 规则打分)
-   ↓
-AI 筛选 (DeepSeek 关键词/兴趣描述 → 标签 + 评分)
-   ↓
-推送 (飞书 / 多通道) + HTML 报告
-   ↓
-MCP 查询 (Claude/Cherry Studio 自然语言访问历史数据)
+                ┌─────────── AI 客户端 (Claude Code / Cursor) ────────────┐
+                │                MCP over SSH stdio                       │
+                └────────────────────┬────────────────────────────────────┘
+                                     ↓
+┌────────────────────── docker 网络 ─────────────────────────────────────┐
+│                                                                          │
+│   ┌──────────────────┐    ┌──────────────────────┐    ┌───────────────┐ │
+│   │  trendradar      │    │  trendradar-mcp      │    │ trendradar-   │ │
+│   │  (cron 抓取主体)  │    │  (FastMCP, 42 tools) │ ←→ │ chrome (Chrome│ │
+│   │                  │    │  - 26 数据查询       │    │ +Xvfb+nginx)  │ │
+│   │  - 国内热榜       │    │  - 16 浏览器接管 ⭐  │    │ chrome-data   │ │
+│   │  - RSS 订阅       │    │                      │    │ volume 持久   │ │
+│   │  - keyword 检索   │    └──────────────────────┘    │ 登录态        │ │
+│   │  - AI 筛选 + 推送 │                                └───────────────┘ │
+│   │  - 8080 公网托管  │                                                  │
+│   └──────────────────┘                                                  │
+└────────────────────────────────────────────────────────────────────────┘
+                                ↓
+                  飞书 / output/qr/*.png (手机扫码)
+
+数据流向:
+  数据源 (R1/R2/B/J1) → 归一化 → SQLite → AI 筛选 → 推送/查询/Agent 操控
 ```
 
 ### 数据源分类
@@ -71,6 +84,7 @@ MCP 查询 (Claude/Cherry Studio 自然语言访问历史数据)
 | **R1** | 官方 RSS(HN/博客/Reddit 子版块等) | 无 | `rss.feeds` |
 | **R2** | RSSHub 中转(微博/B站/即刻) | 自建 | `rss.feeds`(把 RSSHub 地址写进来) |
 | **B** | 官方搜索 API(GitHub/HN/Reddit OAuth) | 部分需 | `keyword_search.sources` |
+| **J1** ⭐ | 远程浏览器接管(小红书/即刻/知乎/X 等登录态站) | 手机扫码一次 | AI Agent 用 `browser_*` MCP 工具实时调度 |
 
 ### 关键路径(代码视角)
 
@@ -111,7 +125,9 @@ trendradar/__main__.py::NewsAnalyzer.run()
 | 项 | 用途 | 必要性 | 申请地址 |
 |---|------|--------|---------|
 | **DeepSeek API Key** | LLM 调用 | 必须 | https://platform.deepseek.com/api_keys |
-| **飞书 webhook_url** | 推送 | 必须 | 飞书群 → 设置 → 群机器人 → 自定义机器人 |
+| **飞书 webhook_url** | 推送 + J1 扫码 QR | 必须 | 飞书群 → 设置 → 群机器人(或 Lark Flow trigger) |
+| **公网 IP / 域名** | 手机扫 QR 看图必须 | 用 J1 时必填 | 直接填服务器公网 IP 即可 |
+| **8080 端口公网开放** | 同上 | 用 J1 时必须 | 云控制台防火墙 + 主机 iptables 都要放 |
 | **GitHub PAT** | GitHub Search 限流升级 | 强烈推荐 | https://github.com/settings/tokens?type=beta |
 | **Reddit OAuth** | Reddit 关键词检索 | 可选(已有 RSS 兜底) | https://developers.reddit.com → 等审核 |
 
@@ -150,13 +166,18 @@ vim docker/.env
 ```bash
 # AI
 AI_API_KEY=sk-你的DeepSeek key
-AI_MODEL=deepseek/deepseek-chat
+AI_MODEL=deepseek/deepseek-v4-flash
 
-# 飞书
+# 飞书 (支持多账号,分号分隔,任一收到即算成功)
+# 自动识别 Lark Flow (www.feishu.cn) vs 标准机器人 (open.feishu.cn)
 FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxxx
 
 # 关键词跨源检索
 GITHUB_SEARCH_TOKEN=github_pat_xxxx   # 留空也能跑,只是 60/h 限流
+
+# J1 浏览器接管 (留空就不启用 J1)
+PUBLIC_HOST=150.158.98.191            # 你服务器公网 IP,手机扫 QR 用
+# CHROME_HOST/CHROME_PORT 不用改, docker compose 默认值 trendradar-chrome:9222
 
 # 运行
 RUN_MODE=cron
@@ -543,21 +564,38 @@ python manage.py start_webserver
 
 ## MCP 接入
 
-让 Claude / Cherry Studio / VS Code Copilot 等支持 MCP 的客户端自然语言查询你的信息库。
+让 Claude Code / Cursor / Cherry Studio 等 MCP 客户端**自然语言查询数据 + 实时操控浏览器**(42 个工具)。
 
-### 启动 MCP server
+### 服务器侧:trendradar-mcp 容器已起
+
+docker compose 起来后, `trendradar-mcp` 容器以 HTTP 模式监听 3333,
+同时支持每次连接 spawn 一个 stdio 子进程(给 Claude Code 用)。
 
 ```bash
-# 项目自带 entry point
-trendradar-mcp
-
-# 或
-python -m mcp_server
+# 验证容器健康
+docker exec trendradar-mcp env | grep MCP_PORT
+docker logs trendradar-mcp 2>&1 | head -100   # 看 42 个工具注册列表
 ```
 
-监听端口默认 3333(改 `mcp_server` 配置)。
+### 在 Claude Code (Mac) 接入: SSH stdio 模式
 
-### 在 Claude Desktop 接入
+最简单的方式 — 让 Claude Code 通过 SSH 直接调远程 docker exec:
+
+```bash
+# 1. 配 SSH 免密 (一次性)
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+ssh-copy-id root@<服务器IP>
+
+# 2. 加 MCP server
+claude mcp add trendradar \
+  -- ssh -o BatchMode=yes -o StrictHostKeyChecking=no \
+  root@<服务器IP> \
+  docker exec -i trendradar-mcp python -m mcp_server.server --transport stdio
+
+# 3. 重启 Claude Code 后,新 session 已能调 mcp__trendradar__*
+```
+
+### 在 Claude Desktop / Cherry Studio 接入: HTTP 模式
 
 `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
@@ -565,24 +603,128 @@ python -m mcp_server
 {
   "mcpServers": {
     "trendradar": {
-      "command": "python",
-      "args": ["-m", "mcp_server"],
-      "cwd": "/path/to/TrendRadar"
+      "transport": "http",
+      "url": "http://<服务器IP>:3333/mcp"
     }
   }
 }
 ```
 
-### MCP 工具(21 个)
+⚠️ HTTP 模式公网暴露要谨慎,生产建议加 nginx + token 认证,
+或继续用 SSH stdio。
 
-主要分类:
-- 数据查询:`get_trending_topics` / `search_news` / `search_rss` / `find_related_news`
-- 文章读取:`read_article` / `read_articles_batch`
-- 聚合分析:`aggregate_news` / `compare_periods`
-- 系统:`get_system_status` / `list_available_dates`
-- 通知:`send_notification`(直接从对话推送到飞书)
+### MCP 工具(42 个)
 
-**典型用法**:在 Claude 里直接问 "今天 AI Agent 领域有什么新动态" → Claude 调 `search_news` → 返回 + 总结。
+**数据查询/分析 (26 个,原有)**:
+- 查询: `get_trending_topics` / `search_news` / `search_rss` / `find_related_news`
+- 文章: `read_article` / `read_articles_batch`
+- 分析: `aggregate_news` / `compare_periods` / `analyze_sentiment`
+- 系统: `get_system_status` / `list_available_dates`
+- 通知: `send_notification`
+
+**浏览器接管 (16 个,新增 ⭐)**:
+- `browser_help` — **首次必调**,读 SKILL.md 看完整操作指南
+- `browser_health` — 检查远程 Chrome 是否活
+- `browser_navigate` / `browser_snapshot` / `browser_click` / `browser_fill` / `browser_evaluate`
+- `browser_screenshot` / `browser_push_qr_to_feishu` — 截 QR 推飞书让你手机扫
+- `browser_wait_for` / `browser_list_tabs` / `browser_find_tab` / `browser_close_tab`
+- `browser_get_url` / `browser_get_html` / `browser_get_cookies`
+
+详见 [J1 远程浏览器接管](#j1-远程浏览器接管) 章节。
+
+**典型用法**:
+- 数据查询: 问 "今天 AI Agent 领域有什么新动态" → 自动调 `search_news`
+- 浏览器: "打开知乎抓我关注的人最新 10 篇" → 自动 navigate/snapshot/扫码登录(首次)/抓取
+- 组合: "抓即刻最新 20 帖 + 把链接逐一打开总结成日报" → 全链路自动化
+
+---
+
+## J1 远程浏览器接管
+
+**给反爬强、要登录态的站点用** — 小红书、即刻、知乎、X、B 站、微博等。
+登录态服务器持久化, **你扫一次码后,任何 AI Agent 都直接已登录**。
+
+### 架构
+
+3 个 docker 容器协同:
+
+```
+Claude Code (Mac)
+    ↓ MCP stdio
+trendradar-mcp ── browser_* tools ──→ Playwright connect_over_cdp
+                                              ↓
+                                      trendradar-chrome
+                                       (真 Chrome + Xvfb + nginx)
+                                              ↓
+                                       --user-data-dir=/data
+                                       (chrome-data volume 持久化)
+```
+
+为什么要 nginx 反代?Chrome 111+ 强制只绑 localhost + 严格校验 HTTP `Host` 头,
+nginx 在中间改写 Host 让跨容器调用通,顺带支持 WebSocket(CDP 走 WS)。
+
+### 首次扫码登录流程
+
+在 Claude Code 里直接说:
+
+> "打开 web.okjike.com,如果需要登录就推 QR 到飞书让我扫"
+
+Claude 会自己跑:
+1. `browser_navigate("https://web.okjike.com/")` — 检测重定向到 `/login`
+2. `browser_snapshot()` — 找到 QR 元素
+3. `browser_push_qr_to_feishu("[class*=qrCodeContainer]", label="即刻")` — 飞书收到一条带 URL 的卡片
+4. 你**手机点飞书消息里的链接** → 浏览器打开 QR 图 → 即刻 App 扫码
+5. `browser_wait_for(登录后元素, timeout_ms=120000)` — 等扫码完成
+6. cookies/localStorage 写入 `chrome-data` volume → **下次同站访问自动登录**
+
+### 适用场景对照
+
+| 站点 | 扫码 App | 反爬强度 | 状态 |
+|---|---|---|---|
+| 即刻 (web.okjike.com) | 即刻 App | 中 | ✅ 验证通过 |
+| 知乎 (zhihu.com) | 知乎/微信 | 中-强 | 同范式可加 |
+| 小红书 (xiaohongshu.com) | 小红书 App | **极强**(滑块+IP) | 可试,需配频率控制 + 代理 |
+| 微博 (weibo.com) | 微博 App | 中 | 可加 |
+| X (twitter.com) | TOTP/邮箱 | 中 | 可加(需出海代理) |
+| B 站 (bilibili.com) | B 站 App | 中 | 可加 |
+
+### 加新站点
+
+**不用改代码**, 只要在 Claude Code 里描述目标:
+
+> "我要抓 X 网站, 请你 navigate 看 DOM 结构, 找到登录入口和内容选择器"
+
+Claude 用现有 16 个工具自适应探索。复用率高的站点 selector 可以补进
+`mcp_server/skills/browser/SKILL.md` 让后续 session 直接知道。
+
+### 限制
+
+- ❌ 自动绕过验证码 (reCAPTCHA / 滑块都校验 `isTrusted`)
+- ❌ 自动接收手机短信验证码 (需要 SMS 代收平台)
+- ❌ 绕过 IP 风控 (需要住宅代理, $30+/月)
+- ⚠️ 服务器 IDC IP 在小红书等强反爬站很快被风控,可能要降低频率到每 6 小时
+
+### 关键调试命令
+
+```bash
+# Chrome 健康
+docker exec trendradar-mcp python -c "
+import asyncio
+from mcp_server.tools import browser
+print(asyncio.run(browser.health()))
+"
+
+# Chrome 容器日志
+docker logs trendradar-chrome --tail 30
+
+# 看持久化的登录态文件
+ls -la /root/project/TrendRadar/output/chrome-data/Default/
+
+# 清空登录态重新扫码
+docker compose -f docker-compose-build.yml stop trendradar-chrome
+rm -rf output/chrome-data/*
+docker compose -f docker-compose-build.yml up -d trendradar-chrome
+```
 
 ---
 
@@ -722,27 +864,39 @@ python -m trendradar 2>&1 | tee /tmp/run.log
 
 1. **Reddit OAuth 待审核**:走 RSS 兜底,已可用
 2. **GitHub 60/h 限流**(无 token 时):配 PAT 解决
-3. **首次跑较慢**:RSS 串行 + AI 单条,30 条新闻约 2-3 分钟
-4. **L2 五板块分析在代码里仍存在**:用 `ai_analysis.enabled: false` 关
-5. **MCP Server 没专门为 search:* feed 适配**:数据能查到,但工具描述里没明说有"虚拟 feed"概念
-6. **单进程,不并发**:多关键词 × 多 provider 是串行的,可优化但未做
+3. **腾讯云出海不稳**:keyword_search 调 GitHub/HN/Reddit API 可能超时,国内站不受影响
+4. **首次跑较慢**:RSS 串行 + AI 单条,30 条新闻约 2-3 分钟
+5. **L2 五板块分析在代码里仍存在**:用 `ai_analysis.enabled: false` 关
+6. **MCP Server 没专门为 search:* feed 适配**:数据能查到,但工具描述里没明说"虚拟 feed"概念
+7. **单进程,不并发**:多关键词 × 多 provider 是串行的
+8. **J1 没自动 cron**:目前是 AI Agent 手动唤起,未自动定时(可在 Claude Code 里设提醒)
+9. **腾讯 Lighthouse 特有: YJ-FIREWALL 拦 8080**: 需 iptables 手动 ACCEPT + cron 兜底(其他云不需要)
 
 ---
 
 ## 路线图
 
-### 短期(等 Reddit 审核期间)
+### 已完成 ✅
+
+- [x] B 类 API 检索(GitHub/HN/Reddit Search) — 跨源关键词检索打通
+- [x] Reddit RSS 兜底 — 不依赖 OAuth 也能拿 Reddit 内容
+- [x] **J1 远程浏览器接管** — Chrome+Xvfb+nginx 容器化, 16 个 browser_* MCP 工具
+- [x] **扫码登录 + 飞书 QR 推送** — 服务器持久化登录态, 一次扫码长期复用
+- [x] **MCP 42 工具** + SSH stdio 接入 Claude Code
+- [x] 多飞书 webhook 容错 + Lark Flow / 标准机器人自动适配
+
+### 短期
 
 - [ ] 补全 AI/科技方向 RSS 源池(latent.space / interconnects 等)
-- [ ] 关掉国内热榜 + L2 分析(配置即可,推荐做)
 - [ ] 配置 timeline.yaml 调度
+- [ ] J1 已知站点 selector 沉淀进 SKILL.md(知乎/小红书等)
 
 ### 中期
 
-- [ ] J1 Kimi WebBridge 集成(小红书/X/LinkedIn 等登录态源)
 - [ ] F 类聚合 API 支持(Exa/Tavily/Firecrawl)
 - [ ] SearchRouter 并发优化
 - [ ] AIFilter 二次过滤搜索结果
+- [ ] J1 cron 化 — DeepSeek 跑 agent loop 周期自动抓取(月成本几毛)
 
 ### 长期
 
