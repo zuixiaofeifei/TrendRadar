@@ -40,6 +40,25 @@ def health_check(timeout: float = 5.0) -> Optional[dict]:
         return None
 
 
+def _resolve_ws_url() -> str:
+    """从 Chrome 拿 webSocketDebuggerUrl, 改写成可访问的 host
+
+    Chrome 返回的 ws URL 用的是它"以为自己绑定的 host"(被 nginx 改过 Host 后是
+    127.0.0.1:9222), 但这个 URL 在 trendradar 容器里访问不到. 所以我们自己 fetch
+    一次, 把 host 替换成实际可达的 trendradar-chrome:9222.
+    """
+    import re
+    import requests
+
+    host = _chrome_host()
+    port = _chrome_port()
+    r = requests.get(f"http://{host}:{port}/json/version", timeout=10)
+    r.raise_for_status()
+    raw = r.json()["webSocketDebuggerUrl"]
+    # ws://anything:port/path → ws://<host>:<port>/path
+    return re.sub(r"^ws://[^/]+", f"ws://{host}:{port}", raw)
+
+
 @contextmanager
 def browser_page(
     url: Optional[str] = None,
@@ -57,8 +76,10 @@ def browser_page(
     """
     from playwright.sync_api import sync_playwright
 
+    ws_url = _resolve_ws_url()  # 跳过 Playwright 内置 /json/version (host 不对)
+
     with sync_playwright() as p:
-        browser = p.chromium.connect_over_cdp(cdp_url())
+        browser = p.chromium.connect_over_cdp(ws_url)
         ctx = browser.contexts[0] if browser.contexts else browser.new_context()
         page = ctx.new_page()
         page.set_default_timeout(timeout_ms)
