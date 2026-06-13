@@ -31,6 +31,10 @@ def _public_qr_url(qr_path: Path) -> str:
 def push_qr(site_id: str, qr_path: Path, *, expire_minutes: int = 3) -> bool:
     """推送 QR URL 到飞书, 要求用户在 expire_minutes 内扫码
 
+    根据 webhook 域名走不同 payload 格式 (对齐 trendradar 现有推送逻辑):
+        - www.feishu.cn (Lark Flow): msg_type=text, 纯文本
+        - open.feishu.cn (标准自定义机器人): msg_type=interactive, 卡片 2.0 含 markdown
+
     Returns:
         推送成功 True, 推送失败 False
     """
@@ -42,32 +46,45 @@ def push_qr(site_id: str, qr_path: Path, *, expire_minutes: int = 3) -> bool:
         return False
 
     url = _public_qr_url(qr_path)
-    payload = {
-        "msg_type": "post",
-        "content": {
-            "post": {
-                "zh_cn": {
-                    "title": f"🔐 {site_id} 扫码登录",
-                    "content": [
-                        [
-                            {"tag": "text", "text": f"⏱ {expire_minutes} 分钟内有效\n\n"},
-                            {"tag": "a", "text": "→ 点这里打开二维码", "href": url},
-                            {
-                                "tag": "text",
-                                "text": "\n\n用站点对应的 App 扫码,\n登录态自动持久化到下一次抓取",
-                            },
-                        ]
-                    ],
-                }
-            }
-        },
-    }
+
+    if "www.feishu.cn" in webhook_url:
+        # Lark Flow webhook: 纯文本
+        text = (
+            f"🔐 {site_id} 扫码登录\n"
+            f"\n"
+            f"⏱ {expire_minutes} 分钟内有效\n"
+            f"\n"
+            f"二维码: {url}\n"
+            f"\n"
+            f"用对应 App 扫码完成登录,\n"
+            f"登录态自动持久化到下一次抓取"
+        )
+        payload = {
+            "msg_type": "text",
+            "content": {"text": text},
+        }
+    else:
+        # 标准自定义机器人: 交互卡片 2.0 (markdown)
+        md = (
+            f"**🔐 {site_id} 扫码登录**\n\n"
+            f"⏱ {expire_minutes} 分钟内有效\n\n"
+            f"[→ 点这里打开二维码]({url})\n\n"
+            f"用对应 App 扫码完成登录,\n"
+            f"登录态自动持久化到下一次抓取"
+        )
+        payload = {
+            "msg_type": "interactive",
+            "card": {
+                "schema": "2.0",
+                "body": {"elements": [{"tag": "markdown", "content": md}]},
+            },
+        }
 
     try:
         r = requests.post(webhook_url, json=payload, timeout=10)
         r.raise_for_status()
         resp = r.json()
-        # 飞书自定义机器人成功返回 {"code": 0, ...} 或 {"StatusCode": 0, ...}
+        # 标准机器人 {"code": 0}, Flow {"StatusCode": 0}
         if resp.get("code") == 0 or resp.get("StatusCode") == 0:
             logger.info(f"[{site_id}] QR 推飞书成功: {url}")
             return True
