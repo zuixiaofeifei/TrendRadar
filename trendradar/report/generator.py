@@ -161,7 +161,7 @@ def generate_html_report(
     每次生成 HTML 后会：
     1. 保存时间戳快照到 output/html/日期/时间.html（历史记录）
     2. 复制到 output/html/latest/{mode}.html（最新报告）
-    3. 复制到 output/index.html 和根目录 index.html（入口）
+    3. 复制到 output/index.html（入口, 通过 Docker Volume 映射到宿主机）
 
     Args:
         stats: 统计结果列表
@@ -232,15 +232,10 @@ def generate_html_report(
     with open(latest_file, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    # 3. 复制到 index.html（入口）
-    # output/index.html（供 Docker Volume 挂载访问）
+    # 3. 复制到 output/index.html（入口）
+    # Docker Volume 挂载, 宿主机直接看 output/index.html 就是最新报告
     output_index = Path(output_dir) / "index.html"
     with open(output_index, "w", encoding="utf-8") as f:
-        f.write(html_content)
-
-    # 根目录 index.html（供 GitHub Pages 访问）
-    root_index = Path("index.html")
-    with open(root_index, "w", encoding="utf-8") as f:
         f.write(html_content)
 
     return snapshot_file

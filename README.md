@@ -408,12 +408,15 @@ python -m trendradar --doctor
 
 ### 内置 webserver(看 HTML 报告)
 
-```bash
-# 启动
-python manage.py start_webserver
+容器 entrypoint 在 `cron` 模式下会自动起 8080 端口的静态服务托管 `output/`,
+直接访问即可:
 
-# 访问 http://服务器IP:8080
 ```
+http://<服务器IP>:8080         # latest 报告 (output/index.html)
+http://<服务器IP>:8080/qr/     # QR 截图目录
+```
+
+宿主机本地也可以打开 `output/index.html` 看 (volume 映射, 自动跟容器同步).
 
 ---
 
@@ -542,15 +545,12 @@ sqlite3 output/$(date +%F).db "SELECT title, url FROM rss_items WHERE title LIKE
 ### HTML 报告
 
 ```bash
-# 文件位置
+# 文件位置 (宿主机直接看, output 是 docker volume)
 ls output/*.html
+open output/index.html
 
-# scp 回本地浏览器看
-scp root@<服务器>:~/TrendRadar/output/*.html ./
-
-# 或在服务器起 webserver
-python manage.py start_webserver
-# 访问 http://服务器IP:8080
+# 或浏览器访问已自动启动的 webserver
+# http://<服务器IP>:8080
 ```
 
 ### 飞书推送
@@ -930,10 +930,13 @@ sed -i 's/- "Claude Code"/- "Claude Code"\n    - "新关键词"/' config/config.
 sqlite3 output/$(date +%F).db "SELECT feed_id, COUNT(*) FROM rss_items WHERE first_time LIKE '$(date +%H):%' GROUP BY feed_id ORDER BY COUNT(*) DESC"
 ```
 
-### 一行起 webserver
+### 一行看 latest 报告
 
 ```bash
-python manage.py start_webserver
+# 宿主机直接打开 (volume 映射)
+open output/index.html
+
+# 或浏览器访问 http://<服务器IP>:8080 (webserver 由容器 entrypoint 自动启动)
 ```
 
 ---
