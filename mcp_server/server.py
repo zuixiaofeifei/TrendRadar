@@ -24,7 +24,18 @@ from .utils.errors import MCPError
 
 
 # 创建 FastMCP 2.0 应用
-mcp = FastMCP('trendradar-news')
+# instructions: 100 字 meta, 让 LLM 每次会话都知道有 skill 系统(按需取, 不预加载内容)
+mcp = FastMCP(
+    'trendradar-news',
+    instructions=(
+        "TrendRadar MCP Server — AI 友好的信息获取工具集.\n\n"
+        "提供 21 个工具覆盖: 关键词搜索 / RSS 拉取 / 正文展开 / "
+        "浏览器探测 / 推送通知.\n\n"
+        "接到任何非平凡的信息检索任务前, 先调 read_skill('info-retrieval') "
+        "看通用工作流; 做浏览器自动化前, 先调 read_skill('browser').\n\n"
+        "完整 skill 列表用 read_skill() (空参数)."
+    ),
+)
 
 # 全局工具实例（在第一次请求时初始化）
 _tools_instances = {}
@@ -186,7 +197,8 @@ async def resolve_date_range(
 
 # ==================== 数据查询工具 ====================
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): 热榜已弃用 (platforms.enabled=false), 工具失去意义
+# @mcp.tool
 async def get_latest_news(
     platforms: Optional[List[str]] = None,
     limit: int = 50,
@@ -216,7 +228,8 @@ async def get_latest_news(
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): 基于热榜统计, 热榜已弃用
+# @mcp.tool
 async def get_trending_topics(
     top_n: int = 10,
     mode: str = 'current',
@@ -258,23 +271,28 @@ async def get_latest_rss(
     limit: int = 50,
     include_summary: bool = False
 ) -> str:
-    """
-    获取最新的 RSS 订阅数据（支持多日查询）
+    """拉最近 N 天已抓的所有 RSS/关键词搜索数据 — 用于"看看今天有啥"类场景。
 
-    RSS 数据与热榜新闻分开存储，按时间流展示，适合获取特定来源的最新内容。
+    场景:
+      - 用户问"今天有什么 AI 新闻" → get_latest_rss(days=1)
+      - 用户问"昨天 HN 上有什么" → feeds=["hacker-news"], days=2
+      - 想盘点本周 GitHub 关键词命中 → days=7, feeds=["search:github:claude-code"]
+
+    数据范围:
+      - 已订阅的 RSS feeds (hnrss / reddit /etc)
+      - 关键词搜索的虚拟 feed (search:github:* / search:hackernews:*)
+      - feeds 参数留空时返回所有源
 
     Args:
-        feeds: RSS 源 ID 列表，如 ['hacker-news', '36kr']，不指定则返回所有源
-        days: 获取最近 N 天的数据，默认 1（仅今天），最大 30 天
-        limit: 返回条数限制，默认50，最大500
-        include_summary: 是否包含文章摘要，默认False（节省token）
-
-    Returns:
-        JSON格式的 RSS 条目列表
+        feeds: 限定 feed_id 列表; 留空返回所有源
+        days: 最近 N 天, 默认 1; 最大 30
+        limit: 返回上限, 默认 50, 最大 500
+        include_summary: True 才返回摘要(默认 False 省 token)
 
     Examples:
-        - get_latest_rss()
-        - get_latest_rss(days=7, feeds=['hacker-news'])
+        get_latest_rss()                                     # 今天所有源
+        get_latest_rss(days=3, include_summary=True)         # 近 3 天 + 摘要
+        get_latest_rss(feeds=["hacker-news"], days=7)        # HN 一周
     """
     tools = _get_tools()
     result = await asyncio.to_thread(
@@ -284,7 +302,8 @@ async def get_latest_rss(
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): search_news 已统一覆盖 RSS 检索
+# @mcp.tool
 async def search_rss(
     keyword: str,
     feeds: Optional[List[str]] = None,
@@ -354,21 +373,26 @@ async def get_news_by_date(
     limit: int = 50,
     include_url: bool = False
 ) -> str:
-    """
-    获取指定日期的新闻数据，用于历史数据分析和对比
+    """回查历史某天/某段时间的热榜数据 — 历史对比 / 回溯专用。
+
+    场景:
+      - 用户问"上周三 X 是不是上过热搜" → date_range="2026-06-04"
+      - 想跟 get_latest_rss 对照看历史 RSS → 注意: 本工具只查热榜, 不查 RSS
+      - 想看上周 vs 本周对比 → 调两次, AI 自己对比
+
+    注意:
+      - 当前热榜关掉(platforms.enabled=false), 多数情况返回空
+      - 想查 RSS 历史数据用 get_latest_rss(days=N) 或 search_news(date_range=...)
 
     Args:
-        date_range: 日期范围，支持多种格式:
-            - 范围对象: {"start": "2025-01-01", "end": "2025-01-07"}
-            - 自然语言: "今天", "昨天", "本周", "最近7天"
-            - 单日字符串: "2025-01-15"
-            - 默认值: "今天"
-        platforms: 平台ID列表，如 ['zhihu', 'weibo']，不指定则使用所有平台
-        limit: 返回条数限制，默认50，最大1000
-        include_url: 是否包含URL链接，默认False（节省token）
-
-    Returns:
-        JSON格式的新闻列表，包含标题、平台、排名等信息
+        date_range: 多种格式
+            - {"start":"YYYY-MM-DD","end":"YYYY-MM-DD"}
+            - 自然语言: "今天" / "昨天" / "本周" / "最近 7 天"
+            - 单日: "2026-06-04"
+            - 默认"今天"
+        platforms: 平台 ID 限定; 留空查全部
+        limit: 上限默认 50, 最大 1000
+        include_url: 包含 URL, 默认 False
     """
     tools = _get_tools()
     result = await asyncio.to_thread(
@@ -384,7 +408,8 @@ async def get_news_by_date(
 
 # ==================== 高级数据分析工具 ====================
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): AI 取原始数据自算趋势,不需预制
+# @mcp.tool
 async def analyze_topic_trend(
     topic: str,
     analysis_type: str = "trend",
@@ -436,7 +461,8 @@ async def analyze_topic_trend(
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): 含糊的"多模式洞察",AI 选不清,自取数据自分析更灵活
+# @mcp.tool
 async def analyze_data_insights(
     insight_type: str = "platform_compare",
     topic: Optional[str] = None,
@@ -480,7 +506,8 @@ async def analyze_data_insights(
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): AI 资讯场景无需情感分析
+# @mcp.tool
 async def analyze_sentiment(
     topic: Optional[str] = None,
     platforms: Optional[List[str]] = None,
@@ -521,7 +548,8 @@ async def analyze_sentiment(
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): AI 语义聚类自己来,预制反而僵化
+# @mcp.tool
 async def find_related_news(
     reference_title: str,
     date_range: Optional[Union[Dict[str, str], str]] = None,
@@ -561,7 +589,8 @@ async def find_related_news(
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): AI 自己写日报/周报更灵活
+# @mcp.tool
 async def generate_summary_report(
     report_type: str = "daily",
     date_range: Optional[Union[Dict[str, str], str]] = None
@@ -588,7 +617,8 @@ async def generate_summary_report(
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): 抓取阶段已按 URL 去重, 无需运行时合并
+# @mcp.tool
 async def aggregate_news(
     date_range: Optional[Union[Dict[str, str], str]] = None,
     platforms: Optional[List[str]] = None,
@@ -627,7 +657,8 @@ async def aggregate_news(
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): 罕用, AI 自己查两个时段数据自行对比
+# @mcp.tool
 async def compare_periods(
     period1: Union[Dict[str, str], str],
     period2: Union[Dict[str, str], str],
@@ -702,33 +733,36 @@ async def search_news(
     include_rss: bool = False,
     rss_limit: int = 20
 ) -> str:
-    """
-    统一搜索接口，支持多种搜索模式，可同时搜索热榜和RSS
+    """统一关键词查询 — 覆盖 GitHub Issues+Repos / Hacker News / RSS 订阅。
 
-    建议：使用自然语言日期时，先调用 resolve_date_range 获取精确日期范围。
+    场景:
+      - 用户问"X 这个产品/概念最近怎么样" → 首选这个工具
+      - 用户问"最近 AI Agent 圈在聊什么" → query="AI Agent" + include_rss=True
+      - 想看某个关键词在 GitHub 的讨论 → query="X" + include_rss=True
+      - 给出自然语言日期(昨天/上周)时, 先调 resolve_date_range 转标准格式
+
+    覆盖范围:
+      - 已订阅的 RSS feeds (hacker-news / r-LocalLLaMA 等)
+      - 关键词搜索 fetch 进来的虚拟 RSS (search:github:*, search:hackernews:*)
+      - 热榜数据 (当前 platforms.enabled=false, 这部分一般为空)
 
     Args:
-        query: 搜索关键词或内容片段
-        search_mode: 搜索模式
-            - "keyword": 精确关键词匹配（默认）
-            - "fuzzy": 模糊内容匹配
-            - "entity": 实体名称搜索（人物/地点/机构）
-        date_range: 日期范围，格式 {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}，默认今天
-        platforms: 平台ID列表，如 ['zhihu', 'weibo']，不指定则使用所有平台
-        limit: 热榜返回条数限制，默认50
-        sort_by: 排序方式 - "relevance"（相关度）/ "weight"（权重）/ "date"（日期）
-        threshold: 相似度阈值（仅fuzzy模式），0-1，默认0.6
-        include_url: 是否包含URL链接，默认False
-        include_rss: 是否同时搜索RSS数据，默认False
-        rss_limit: RSS返回条数限制，默认20
-
-    Returns:
-        JSON格式的搜索结果，包含热榜新闻列表和可选的RSS结果
+        query: 关键词,中英文皆可
+        search_mode: keyword(精确,默认) | fuzzy(模糊) | entity(实体)
+        date_range: {"start":"YYYY-MM-DD","end":"YYYY-MM-DD"}, 默认今天
+        platforms: 限定热榜平台 ID 列表(当前热榜关掉,通常不传)
+        limit: 热榜返回上限,默认 50
+        sort_by: relevance(相关度) | weight | date
+        threshold: fuzzy 模式相似度阈值 0-1
+        include_url: 是否返回 URL 链接,默认 False (但探索后续要展开正文时务必 True)
+        include_rss: ⚠️ 想看 GitHub/HN/RSS 数据时必须设 True(默认 False 只查热榜,大概率空)
+        rss_limit: RSS 返回上限,默认 20
 
     Examples:
-        - search_news(query="AI")
-        - search_news(query="AI", include_rss=True)
-        - search_news(query="特斯拉", date_range={"start": "2025-01-01", "end": "2025-01-07"})
+        search_news(query="Claude Code", include_rss=True)
+        search_news(query="MCP server", include_rss=True, include_url=True)
+        search_news(query="DeepSeek", include_rss=True,
+                    date_range={"start":"2026-06-13","end":"2026-06-14"})
     """
     tools = _get_tools()
     result = await asyncio.to_thread(
@@ -787,7 +821,8 @@ async def get_system_status() -> str:
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): LLM 用不上, 版本检查是开发者事务
+# @mcp.tool
 async def check_version(
     proxy_url: Optional[str] = None
 ) -> str:
@@ -842,7 +877,8 @@ async def trigger_crawl(
 
 # ==================== 存储同步工具 ====================
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): 启动时自动 pull, 不需 LLM 触发
+# @mcp.tool
 async def sync_from_remote(
     days: int = 7
 ) -> str:
@@ -883,7 +919,8 @@ async def sync_from_remote(
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): 调试用, LLM 用不上
+# @mcp.tool
 async def get_storage_status() -> str:
     """
     获取存储配置和状态
@@ -898,7 +935,8 @@ async def get_storage_status() -> str:
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): 边缘场景
+# @mcp.tool
 async def list_available_dates(
     source: str = "both"
 ) -> str:
@@ -967,7 +1005,8 @@ async def read_article(
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): AI 并行调 read_article 即可
+# @mcp.tool
 async def read_articles_batch(
     urls: List[str],
     timeout: int = 30
@@ -1009,7 +1048,8 @@ async def read_articles_batch(
 # ==================== 通知推送工具 ====================
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): 格式指南应在 prompt 内, 不该当 tool
+# @mcp.tool
 async def get_channel_format_guide(channel: Optional[str] = None) -> str:
     """
     获取通知渠道的格式化策略指南
@@ -1074,22 +1114,15 @@ async def send_notification(
     title: str = "TrendRadar 通知",
     channels: Optional[List[str]] = None,
 ) -> str:
-    """
-    向已配置的通知渠道发送消息
+    """主动给用户推送消息 — 飞书 / Telegram / 邮件等已配置渠道。
 
-    接受 markdown 格式内容，内部自动适配各渠道的格式要求和限制：
-    - 飞书：Markdown 卡片消息（支持 **粗体**、<font color>彩色文本、[链接](url)、---）
-    - 钉钉：Markdown（自动降级标题为 ###、剥离 <font> 标签和删除线）
-    - 企业微信：Markdown（自动剥离 # 标题、---、<font> 标签、删除线）
-    - Telegram：HTML（自动转换 **→<b>、*→<i>、~~→<s>、>→<blockquote>）
-    - Email：HTML 邮件（完整网页样式，支持 # 标题、---、粗体斜体）
-    - ntfy：Markdown（自动剥离 <font> 标签）
-    - Bark：Markdown（自动简化为粗体+链接，适配 iOS 推送）
-    - Slack：mrkdwn（自动转换 **→*、~~→~、[text](url)→<url|text>）
-    - 通用 Webhook：Markdown（支持自定义模板）
+    场景:
+      - 用户说"把这个总结发我飞书" → channels=["feishu"]
+      - 用户说"明天早上把热点发我" → 你做完后调这个
+      - 不知道该发哪个渠道时, 先调 get_notification_channels 看已配置的
 
-    提示：发送前可调用 get_channel_format_guide 获取目标渠道的详细格式化策略，
-    以生成最佳排版效果的消息内容。
+    输入 markdown, 内部自动适配各渠道格式(粗体/链接/标题等)。
+    长内容自动分批发送, 不用担心超长。
 
     Args:
         message: markdown 格式的消息内容（必需）
@@ -1112,26 +1145,69 @@ async def send_notification(
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-# ==================== 浏览器工具 (J1 - 远程 Chrome 接管) ====================
-
-from .tools import browser as _browser_tools
-
+# ==================== Skill 系统 ====================
+# 三层架构: instructions(meta) → read_skill(入口) → skills/*/SKILL.md(内容)
+# 替代 2026-06-14 前的 browser_help — 一个工具覆盖所有 skill, 更通用.
 
 @mcp.tool
-async def browser_help() -> str:
-    """获取浏览器工具的完整使用指南 (SKILL.md).
+async def read_skill(name: str = "") -> str:
+    """读取 skill 文档 — 接到非平凡任务前的首选.
 
-    **强烈建议**: 任何用户首次要你做浏览器操作时, 先调一次这个工具看完整说明.
-    含登录扫码流程范例、已知站点 selector、注意事项等.
+    场景:
+      - 任何复杂信息检索 → read_skill("info-retrieval") 看通用工作流
+      - 浏览器自动化任务 → read_skill("browser")
+      - 不知道有哪些 skill → read_skill() (空参数列出全部)
 
-    Returns: SKILL.md 的完整内容 (Markdown 字符串)
+    Args:
+        name: skill 名 ("info-retrieval" / "browser" / 等); 留空返回 skill 列表
+
+    Returns:
+        SKILL.md 内容 (Markdown), 或者 skill 索引 (name 为空时)
     """
     from pathlib import Path
-    skill_path = Path(__file__).parent / "skills" / "browser" / "SKILL.md"
+    skills_dir = Path(__file__).parent / "skills"
+
+    if not name:
+        # 列出全部 skill
+        skills = []
+        for p in sorted(skills_dir.iterdir()):
+            if p.is_dir() and (p / "SKILL.md").exists():
+                # 抓 SKILL.md 头几行的 frontmatter description
+                lines = (p / "SKILL.md").read_text(encoding="utf-8").splitlines()
+                desc = ""
+                in_fm = False
+                for line in lines[:15]:
+                    if line.strip() == "---":
+                        in_fm = not in_fm
+                        continue
+                    if in_fm and line.startswith("description:"):
+                        desc = line.split(":", 1)[1].strip()
+                        break
+                skills.append(f"- **{p.name}**: {desc or '(无描述)'}")
+        if not skills:
+            return "# Available Skills\n\n(skills/ 目录下未找到 SKILL.md)"
+        return (
+            "# Available Skills\n\n"
+            "用 `read_skill(name=\"<skill 名>\")` 拉具体内容.\n\n"
+            + "\n".join(skills)
+        )
+
+    # 读指定 skill
+    skill_path = skills_dir / name / "SKILL.md"
+    if not skill_path.exists():
+        return (
+            f"# Skill '{name}' 不存在\n\n"
+            f"用 `read_skill()` (空参数) 查看可用 skill 列表."
+        )
     try:
         return skill_path.read_text(encoding="utf-8")
     except Exception as e:
-        return f"# Browser Skill\n\n(SKILL.md 读取失败: {e})"
+        return f"# Skill '{name}'\n\n(读取失败: {e})"
+
+
+# ==================== 浏览器工具 (J1 - 远程 Chrome 接管) ====================
+
+from .tools import browser as _browser_tools
 
 
 @mcp.tool
@@ -1148,15 +1224,22 @@ async def browser_navigate(
     wait_until: str = "domcontentloaded",
     timeout_ms: int = 30000,
 ) -> str:
-    """打开 URL.
+    """打开 URL — 浏览器任务的起点.
+
+    场景:
+      - search_news 没覆盖某个网站, 需要直接探测页面 → 这是入口
+      - 给某个 URL 抓内容, 但 read_article 拿不到(需登录/JS渲染) → 用浏览器
+      - 自动登录、扫码、填表场景的第一步
+
+    典型流程:
+      browser_navigate(url) → browser_snapshot() → browser_click/fill →
+      browser_wait_for → browser_evaluate / browser_get_html
 
     Args:
         url: 目标 URL
-        new_tab: True 开新 tab 并切到这个 tab (并存场景); False 当前 tab 跳转 (默认)
-        wait_until: "load" / "domcontentloaded" / "networkidle"
+        new_tab: 默认 False(当前 tab 跳转). True 开新 tab — 方案 A 单 tab 模型下少用
+        wait_until: "load" / "domcontentloaded"(默认,够用) / "networkidle"(SPA 慢)
         timeout_ms: 默认 30s
-
-    Returns: JSON {success, url, title, new_tab}
     """
     result = await _browser_tools.navigate(url, new_tab=new_tab, wait_until=wait_until, timeout_ms=timeout_ms)
     return json.dumps(result, ensure_ascii=False, indent=2)
@@ -1255,7 +1338,8 @@ async def browser_wait_for(
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A): 服务端单 tab 模型, 不暴露 tab 概念
+# @mcp.tool
 async def browser_list_tabs() -> str:
     """列所有 tab. is_active=True 是当前操作目标.
 
@@ -1265,7 +1349,8 @@ async def browser_list_tabs() -> str:
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A): 服务端单 tab 模型, 不暴露 tab 概念
+# @mcp.tool
 async def browser_find_tab(url_pattern: str) -> str:
     """找 URL 含 url_pattern 子串的 tab 并切为 active.
 
@@ -1275,7 +1360,8 @@ async def browser_find_tab(url_pattern: str) -> str:
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A): 服务端单 tab 模型, 不暴露 tab 概念
+# @mcp.tool
 async def browser_close_tab() -> str:
     """关 active tab. 最后一个 tab 会自动新建空白 tab 占位.
 
@@ -1285,7 +1371,8 @@ async def browser_close_tab() -> str:
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): snapshot 已包含 URL
+# @mcp.tool
 async def browser_get_url() -> str:
     """当前 page URL + title. 判断登录态最常用.
 
@@ -1308,7 +1395,8 @@ async def browser_get_html(selector: Optional[str] = None, max_chars: int = 1000
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool
+# DEPRECATED 2026-06-14 (方案 A 精简): 调试用, LLM 用不上
+# @mcp.tool
 async def browser_get_cookies(url_pattern: Optional[str] = None) -> str:
     """看 cookies (调试登录态). 不返回 value 避免泄露.
 

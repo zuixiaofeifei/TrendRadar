@@ -1,3 +1,8 @@
+---
+name: browser
+description: 浏览器自动化工作流 — 做任何浏览器任务前必读
+---
+
 # Browser Skill — 远程 Chrome 自动化
 
 通过 trendradar-mcp 暴露的 `browser_*` 工具接管服务器上的真 Chrome 实例。
