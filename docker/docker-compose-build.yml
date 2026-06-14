@@ -81,7 +81,9 @@ services:
       - "${MCP_HOST:-127.0.0.1}:${MCP_PORT:-3333}:3333"
 
     volumes:
-      - ../config:/app/config:ro
+      # config 改 rw: 让 add_rss_feed 等动态配置工具能改 yaml
+      # (trendradar 主容器仍用 :ro, 单点写入避免竞态)
+      - ../config:/app/config
       - ../output:/app/output
 
     environment:
